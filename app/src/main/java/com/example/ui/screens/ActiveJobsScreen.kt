@@ -1,0 +1,361 @@
+package com.example.ui.screens
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.model.JobSheetEntity
+import com.example.data.model.UserEntity
+import com.example.data.repository.ReturnCalculation
+import com.example.ui.components.*
+import com.example.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActiveJobsScreen(
+    currentUser: UserEntity,
+    allJobSheets: List<JobSheetEntity>,
+    onReturnJob: (JobSheetEntity) -> Unit,
+    onEditJob: (JobSheetEntity) -> Unit,
+    onDeleteJob: (JobSheetEntity) -> Unit,
+    onViewReceipt: (JobSheetEntity) -> Unit,
+    onNavigateBack: () -> Unit
+) {
+    BackHandler { onNavigateBack() }
+    var selectedTab by remember { mutableStateOf(0) } // 0: Active, 1: Overdue, 2: Returned/Completed
+    var searchQuery by remember { mutableStateOf("") }
+    val now = remember { System.currentTimeMillis() }
+    val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
+
+    val nonDeleted = remember(allJobSheets) { allJobSheets.filter { !it.isDeleted } }
+
+    val filteredList = remember(nonDeleted, selectedTab, searchQuery) {
+        val tabFiltered = when (selectedTab) {
+            0 -> nonDeleted.filter { it.status == "active" || it.status == "overdue" }
+            1 -> nonDeleted.filter { it.status == "overdue" || (it.status == "active" && it.dueTime < now) }
+            2 -> nonDeleted.filter { it.status == "returned" }
+            else -> nonDeleted
+        }
+
+        if (searchQuery.trim().isEmpty()) {
+            tabFiltered
+        } else {
+            val q = searchQuery.trim().lowercase()
+            tabFiltered.filter {
+                it.customerName.lowercase().contains(q) ||
+                it.customerPhone.contains(q) ||
+                it.id.lowercase().contains(q) ||
+                it.machineName.lowercase().contains(q)
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Rental Orders", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White) },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = BabaRed)
+            )
+        },
+        containerColor = BabaBg
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Search Input
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search by customer, phone, or job #", fontSize = 13.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = BabaGray) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = BabaGray)
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = babaTextFieldColors(),
+                textStyle = babaInputTextStyle(fontSize = 14.sp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            // Tabs: Active, Overdue, Returned
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = Color.White,
+                contentColor = BabaRed
+            ) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = {
+                        Text(
+                            text = "Active (${nonDeleted.count { it.status == "active" || it.status == "overdue" }})",
+                            fontSize = 12.sp,
+                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = {
+                        val ovCount = nonDeleted.count { it.status == "overdue" || (it.status == "active" && it.dueTime < now) }
+                        Text(
+                            text = "Overdue ($ovCount)",
+                            fontSize = 12.sp,
+                            color = if (ovCount > 0) BabaOverdue else BabaDark,
+                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = {
+                        Text(
+                            text = "Returned (${nonDeleted.count { it.status == "returned" }})",
+                            fontSize = 12.sp,
+                            fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+            }
+
+            // List Content
+            if (filteredList.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircleOutline,
+                            contentDescription = "No rental orders",
+                            tint = BabaGray,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            text = if (searchQuery.isNotEmpty()) "No rental orders match your search" else "No rental orders found",
+                            fontSize = 14.sp,
+                            color = BabaGray,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(filteredList, key = { it.id }) { job ->
+                        val isOverdue = job.status == "overdue" || (job.status == "active" && job.dueTime < now)
+                        OrderCard(
+                            jobSheet = job,
+                            isOverdue = isOverdue,
+                            dateFormat = dateFormat,
+                            onReturn = { onReturnJob(job) },
+                            onEdit = { onEditJob(job) },
+                            onDelete = { onDeleteJob(job) },
+                            onViewReceipt = { onViewReceipt(job) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OrderCard(
+    jobSheet: JobSheetEntity,
+    isOverdue: Boolean,
+    dateFormat: SimpleDateFormat,
+    onReturn: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onViewReceipt: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = if (isOverdue) 1.5.dp else 0.5.dp,
+                color = if (isOverdue) BabaOverdue else BabaBorder,
+                shape = RoundedCornerShape(14.dp)
+            )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = jobSheet.id,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 14.sp,
+                        color = BabaRed
+                    )
+                    Text(text = "• ${jobSheet.categoryName}", fontSize = 11.sp, color = BabaGray)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = when (jobSheet.status) {
+                        "returned" -> BabaSuccessLight
+                        else -> if (isOverdue) BabaOverdueLight else BabaYellowLight
+                    }
+                ) {
+                    Text(
+                        text = when (jobSheet.status) {
+                            "returned" -> "RETURNED"
+                            else -> if (isOverdue) "OVERDUE" else "ACTIVE"
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        color = when (jobSheet.status) {
+                            "returned" -> BabaSuccess
+                            else -> if (isOverdue) BabaOverdue else BabaYellowDark
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "${jobSheet.quantity}x ${jobSheet.machineName}",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = BabaDark
+            )
+
+            Text(
+                text = "Customer: ${jobSheet.customerName} • ${jobSheet.customerPhone}",
+                fontSize = 12.sp,
+                color = BabaDark,
+                modifier = Modifier.padding(vertical = 2.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Due: ${dateFormat.format(Date(jobSheet.dueTime))}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isOverdue && jobSheet.status != "returned") BabaOverdue else BabaGray
+                )
+                Text(
+                    text = "Deposit: ₹${jobSheet.depositAmount}",
+                    fontSize = 11.sp,
+                    color = BabaSuccess,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (jobSheet.status == "returned") {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = BabaBorder)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Settled: ₹${jobSheet.totalRentalFee}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BabaDark
+                    )
+                    Text(
+                        text = if (jobSheet.finalSettlement > 0) "Dues: ₹${jobSheet.finalSettlement}" else "Fully Settled",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (jobSheet.finalSettlement > 0) BabaOverdue else BabaSuccess
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BabaBorder)
+
+            // Actions row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (jobSheet.status != "returned") {
+                    Button(
+                        onClick = onReturn,
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1.3f).testTag("order_return_${jobSheet.id}")
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = "Return", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Mark Returned", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                IconButton(onClick = onViewReceipt, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Receipt, contentDescription = "Receipt", tint = BabaDark, modifier = Modifier.size(18.dp))
+                }
+
+                if (jobSheet.status != "returned") {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BabaDark, modifier = Modifier.size(18.dp))
+                    }
+
+                    IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = BabaOverdue, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}

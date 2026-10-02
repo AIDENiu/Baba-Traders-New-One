@@ -1,0 +1,26 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Yellow curved emblem bottom-right -->
+    <path
+        android:fillColor="#FFD200"
+        android:pathData="M 48,56 C 48,56 54,54 64,54 C 76,54 84,62 84,72 C 84,81 76,87 64,87 C 48,87 40,87 35,87 C 35,87 42,75 48,56 Z" />
+    <!-- Subtle shade on yellow -->
+    <path
+        android:fillColor="#F0BE00"
+        android:pathData="M 64,87 C 76,87 84,81 84,72 C 84,68 81,64 77,61 C 72,73 58,82 45,86 C 48,87 56,87 64,87 Z" />
+    <!-- Diagonal hammer handle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 33,88 L 27,82 L 53,52 L 59,58 Z" />
+    <!-- Hammer Head: Claw and Face -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 50,47 C 45,46 39,40 37,33 C 43,35 48,39 52,43 L 57,38 L 68,49 L 63,54 C 61,51 55,47 50,47 Z" />
+    <!-- Striking Face of Hammer -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 65,46 L 73,38 C 75,36 77,38 78,39 L 80,41 C 81,42 79,44 77,46 L 69,54 Z" />
+</vector>
