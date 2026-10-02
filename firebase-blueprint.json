@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Shop staff operator (Owner or Worker)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Auth UID" },
+        "name": { "type": "string", "description": "Staff Name" },
+        "phoneOrUsername": { "type": "string", "description": "Username or Phone" },
+        "role": { "type": "string", "enum": ["owner", "worker"], "description": "Staff role" },
+        "active": { "type": "boolean", "description": "Active status" },
+        "maxDiscountPercent": { "type": "number", "description": "Worker discount ceiling %" },
+        "maxDiscountAmount": { "type": "number", "description": "Worker discount ceiling ₹" }
+      },
+      "required": ["uid", "name", "role", "active"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Equipment rental customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Customer ID" },
+        "name": { "type": "string", "description": "Customer Name" },
+        "phone": { "type": "string", "description": "Customer Phone" },
+        "address": { "type": "string", "description": "Customer Address" },
+        "idProofLocalPathRef": { "type": "string", "description": "Device-local photo path metadata only" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "MachineCategory": {
+      "title": "MachineCategory",
+      "description": "Category for rental equipment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Category ID" },
+        "name": { "type": "string", "description": "Category Name" },
+        "icon": { "type": "string", "description": "Icon identifier" }
+      },
+      "required": ["id", "name"]
+    },
+    "Machine": {
+      "title": "Machine",
+      "description": "Machinery or hardware item available for rental",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Machine ID" },
+        "categoryId": { "type": "string", "description": "Category ID reference" },
+        "categoryName": { "type": "string", "description": "Category Name" },
+        "name": { "type": "string", "description": "Machine Name" },
+        "baseDailyRate": { "type": "number", "description": "Base Daily Rate" },
+        "dailyRate": { "type": "number", "description": "Current Daily Rate" },
+        "totalQty": { "type": "integer", "description": "Total Quantity" },
+        "availableQty": { "type": "integer", "description": "Available Quantity" },
+        "specs": { "type": "string", "description": "Equipment Specifications" }
+      },
+      "required": ["id", "categoryId", "name", "dailyRate", "availableQty"]
+    },
+    "JobSheet": {
+      "title": "JobSheet",
+      "description": "Rental transaction job sheet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Job Sheet ID" },
+        "customerId": { "type": "string", "description": "Customer ID reference" },
+        "customerName": { "type": "string", "description": "Customer Name" },
+        "customerPhone": { "type": "string", "description": "Customer Phone" },
+        "machineId": { "type": "string", "description": "Machine ID reference" },
+        "machineName": { "type": "string", "description": "Machine Name" },
+        "categoryName": { "type": "string", "description": "Category Name" },
+        "quantity": { "type": "integer", "description": "Quantity rented" },
+        "rateUsed": { "type": "number", "description": "Daily rental rate charged" },
+        "discount": { "type": "number", "description": "Discount applied" },
+        "deposit": { "type": "number", "description": "Security deposit collected" },
+        "depositMethod": { "type": "string", "description": "Payment method for deposit" },
+        "billingCycleType": { "type": "string", "description": "24hr or working_hours" },
+        "startTime": { "type": "string", "format": "date-time", "description": "Rental start timestamp" },
+        "dueTime": { "type": "string", "format": "date-time", "description": "Rental return due timestamp" },
+        "returnTime": { "type": "string", "format": "date-time", "description": "Actual return timestamp" },
+        "status": { "type": "string", "enum": ["active", "overdue", "returned"], "description": "Job sheet status" },
+        "checkoutByUid": { "type": "string", "description": "UID of billing staff" },
+        "checkoutByName": { "type": "string", "description": "Name of billing staff" },
+        "handledByUid": { "type": "string", "description": "UID of equipment handling staff" },
+        "handledByName": { "type": "string", "description": "Name of equipment handling staff" },
+        "isDeleted": { "type": "boolean", "description": "Soft-delete flag" },
+        "lateFee": { "type": "number", "description": "Calculated late fee" },
+        "totalRentalFee": { "type": "number", "description": "Total rental fee" },
+        "finalSettlement": { "type": "number", "description": "Final settlement amount" },
+        "notes": { "type": "string", "description": "Rental notes" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "customerId", "machineId", "quantity", "rateUsed", "deposit", "status", "handledByUid", "isDeleted"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Immutable audit log of staff actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID" },
+        "jobSheetId": { "type": "string", "description": "Referenced Job Sheet ID" },
+        "action": { "type": "string", "enum": ["created", "edited", "deleted", "returned"], "description": "Action performed" },
+        "handledByUid": { "type": "string", "description": "UID of staff member" },
+        "handledByName": { "type": "string", "description": "Name of staff member" },
+        "changeSummary": { "type": "string", "description": "Human-readable summary of the action" },
+        "serverTimestamp": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["id", "jobSheetId", "action", "handledByUid", "serverTimestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Staff profiles and roles"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customer directory"
+    },
+    "/machine_categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/MachineCategory" },
+      "description": "Machine categories"
+    },
+    "/machines/{machineId}": {
+      "schema": { "$ref": "#/entities/Machine" },
+      "description": "Equipment inventory"
+    },
+    "/job_sheets/{jobSheetId}": {
+      "schema": { "$ref": "#/entities/JobSheet" },
+      "description": "Active and historical rental job sheets"
+    },
+    "/activity_log/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Write-once activity audit trail"
+    }
+  }
+}

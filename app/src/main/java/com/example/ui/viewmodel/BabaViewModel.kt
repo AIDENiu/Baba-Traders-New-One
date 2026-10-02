@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.firebase.FirestoreSyncService
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
 import com.example.data.model.JobSheetEntity
@@ -16,6 +17,7 @@ import com.example.data.model.PaymentEntity
 import com.example.data.model.UserEntity
 import com.example.data.repository.BabaRepository
 import com.example.data.repository.ReturnCalculation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +58,10 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application, viewModelScope)
     val repository = BabaRepository(db)
+
+    val syncService = FirestoreSyncService(application, db, viewModelScope)
+    val isSyncing: StateFlow<Boolean> = syncService.isSyncing
+    val syncError: StateFlow<String?> = syncService.syncError
 
     // Current Logged In User
     private val _currentUser = MutableStateFlow<UserEntity?>(null)
@@ -156,6 +162,11 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardStats())
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            AppDatabase.ensureSeedData(db)
+            syncService.startRealtimeListeners()
+        }
+
         // Automatically monitor activity logs to trigger Owner Notifications if worker edited or deleted a job sheet
         viewModelScope.launch {
             repository.activityLogs.collect { logs ->
@@ -185,6 +196,11 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (user.pin.isEmpty() || user.pin == enteredPin) {
             _currentUser.value = user
+            viewModelScope.launch(Dispatchers.IO) {
+                if (repository.getUserById(user.id) == null) {
+                    repository.insertUser(user)
+                }
+            }
             onSuccess()
         } else {
             onError("Incorrect PIN. Please try again.")
@@ -193,6 +209,11 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun directLoginAs(user: UserEntity) {
         _currentUser.value = user
+        viewModelScope.launch(Dispatchers.IO) {
+            if (repository.getUserById(user.id) == null) {
+                repository.insertUser(user)
+            }
+        }
     }
 
     fun logout() {

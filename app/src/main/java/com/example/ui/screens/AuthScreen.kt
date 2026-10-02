@@ -37,8 +37,36 @@ fun AuthScreen(
     users: List<UserEntity>,
     onLoginSuccess: (UserEntity) -> Unit
 ) {
-    var selectedUser by remember(users) {
-        mutableStateOf(users.firstOrNull { it.role == "owner" } ?: users.firstOrNull())
+    val defaultOperators = remember {
+        listOf(
+            UserEntity(
+                id = "user_owner_naveen",
+                name = "Naveen",
+                phoneOrUsername = "naveen",
+                pin = "1234",
+                role = "owner",
+                isActive = true,
+                maxDiscountPercent = 15.0,
+                maxDiscountAmount = 200.0
+            ),
+            UserEntity(
+                id = "user_worker_suresh",
+                name = "Suresh",
+                phoneOrUsername = "suresh",
+                pin = "0000",
+                role = "worker",
+                isActive = true
+            )
+        )
+    }
+
+    val activeUsers = remember(users) {
+        val list = users.filter { it.isActive }
+        if (list.isNotEmpty()) list else defaultOperators
+    }
+
+    var selectedUser by remember(activeUsers) {
+        mutableStateOf(activeUsers.firstOrNull { it.role == "owner" } ?: activeUsers.firstOrNull())
     }
     var pin by remember { mutableStateOf("") }
     var pinVisible by remember { mutableStateOf(true) }
@@ -151,7 +179,7 @@ fun AuthScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        users.filter { it.isActive }.forEach { user ->
+                        activeUsers.forEach { user ->
                             val isSelected = selectedUser?.id == user.id
                             Surface(
                                 modifier = Modifier

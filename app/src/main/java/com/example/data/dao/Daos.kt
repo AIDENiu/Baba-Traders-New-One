@@ -28,6 +28,9 @@ interface UserDao {
     @Query("SELECT * FROM users WHERE role = 'owner' LIMIT 1")
     suspend fun getOwner(): UserEntity?
 
+    @Query("SELECT COUNT(*) FROM users")
+    suspend fun getUserCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity)
 
@@ -61,11 +64,17 @@ interface MachineDao {
     @Query("SELECT * FROM machine_categories ORDER BY name ASC")
     fun getAllCategories(): Flow<List<MachineCategoryEntity>>
 
+    @Query("SELECT COUNT(*) FROM machine_categories")
+    suspend fun getCategoryCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategory(category: MachineCategoryEntity)
 
     @Query("SELECT * FROM machines ORDER BY name ASC")
     fun getAllMachines(): Flow<List<MachineEntity>>
+
+    @Query("SELECT COUNT(*) FROM machines")
+    suspend fun getMachineCount(): Int
 
     @Query("SELECT * FROM machines WHERE categoryId = :categoryId ORDER BY name ASC")
     fun getMachinesByCategory(categoryId: String): Flow<List<MachineEntity>>

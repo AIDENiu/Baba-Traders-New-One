@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'owner') ||
+        ('email' in request.auth.token && request.auth.token.email == 'rupak2472@gmail.com')
+      );
+    }
+
+    function isStaff() {
+      return isAuthenticated() && (
+        isOwner() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'worker')
+      );
+    }
+
+    // 1. Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isOwner());
+      allow write: if isOwner() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // 2. Customers collection
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isStaff();
+      allow delete: if isOwner();
+    }
+
+    // 3. Machine categories
+    match /machine_categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // 4. Machines collection: Workers cannot modify base pricing
+    match /machines/{machineId} {
+      allow read: if isAuthenticated();
+      allow create, delete: if isOwner();
+      allow update: if isOwner() || (
+        isStaff() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['baseDailyRate', 'dailyRate', 'name', 'categoryId'])
+      );
+    }
+
+    // 5. Job sheets collection: Worker discount capped at 200; no hard-deletes by workers
+    match /job_sheets/{jobSheetId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff() && (
+        isOwner() || (request.resource.data.discount <= 200 && request.resource.data.isDeleted == false)
+      );
+      allow update: if isStaff() && (
+        isOwner() || (request.resource.data.discount <= 200 && (!resource.data.isDeleted || request.resource.data.isDeleted))
+      );
+      allow delete: if isOwner();
+    }
+
+    // 6. Activity log: Write-only-once. Deny update and delete entirely
+    match /activity_log/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+  }
+}
