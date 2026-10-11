@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "771267436541",
+    "project_id": "gen-lang-client-0347270777",
+    "storage_bucket": "gen-lang-client-0347270777.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:771267436541:android:2fbc55078fb33e87b5c394",
+        "android_client_info": {
+          "package_name": "com.aistudio.babajobsheet.hkprtv"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "771267436541-u379vdfmlcm5pli8dggganf6mloetd8u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.babajobsheet.hkprtv",
+            "certificate_hash": "4df44b529a43bcf2f138ffc0522ef6245abff9e3"
+          }
+        },
+        {
+          "client_id": "771267436541-2uvb93au9qr3mafa3ogq90di7sigrrk4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDhxMy2xpJmNaRXy7uwhM1MLx4vClabJTE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "771267436541-2uvb93au9qr3mafa3ogq90di7sigrrk4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
