@@ -117,6 +117,18 @@ test("Worker CANNOT hard-delete job sheet", async () => {
   await assertFails(workerDb.collection("job_sheets").doc("job_del").delete());
 });
 
+test("Owner CANNOT delete job sheet (Item 4: delete is blocked for all users)", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("job_sheets").doc("job_del_owner").set({
+      id: "job_del_owner",
+      discount: 0,
+      isDeleted: false,
+    });
+  });
+  const ownerDb = testEnv.authenticatedContext(OWNER_UID).firestore();
+  await assertFails(ownerDb.collection("job_sheets").doc("job_del_owner").delete());
+});
+
 test("Activity log is write-once (create allowed, update and delete denied)", async () => {
   const workerDb = testEnv.authenticatedContext(WORKER_UID).firestore();
   await assertSucceeds(

@@ -17,6 +17,8 @@ import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.dao.DailyCashDao
+import com.example.data.model.DailyCashEntity
 import com.example.data.model.UserEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,9 +32,10 @@ import kotlinx.coroutines.launch
         MachineEntity::class,
         JobSheetEntity::class,
         PaymentEntity::class,
-        ActivityLogEntity::class
+        ActivityLogEntity::class,
+        DailyCashEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,6 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun jobSheetDao(): JobSheetDao
     abstract fun paymentDao(): PaymentDao
     abstract fun activityLogDao(): ActivityLogDao
+    abstract fun dailyCashDao(): DailyCashDao
 
     companion object {
         @Volatile

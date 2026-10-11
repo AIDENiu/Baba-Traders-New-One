@@ -7,6 +7,7 @@ import androidx.core.content.FileProvider
 import com.example.data.AppDatabase
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
+import com.example.data.model.DailyCashEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
@@ -95,15 +96,20 @@ class BabaRepository(private val db: AppDatabase) {
         billingCycle: String,
         checkoutUser: UserEntity,
         handledUser: UserEntity,
-        notes: String
+        notes: String,
+        personPhotoPath: String? = null,
+        idPhotoPath: String? = null,
+        machinePhotoPath: String? = null,
+        explicitDueTime: Long? = null,
+        context: Context? = null
     ): JobSheetEntity {
         // 1. Ensure customer is persisted
-        db.customerDao().insertCustomer(customer)
+        db.customerDao().insertCustomer(customer.copy(personPhotoPath = personPhotoPath ?: customer.personPhotoPath))
 
         // 2. Generate unique display ID
         val jobId = generateNextJobId()
         val now = System.currentTimeMillis()
-        val dueTime = computeDueTime(now, billingCycle)
+        val dueTime = explicitDueTime ?: computeDueTime(now, billingCycle)
 
         val jobSheet = JobSheetEntity(
             id = jobId,
@@ -127,14 +133,18 @@ class BabaRepository(private val db: AppDatabase) {
             handledBy = handledUser.id,
             handledByName = handledUser.name,
             isDeleted = false,
-            notes = notes
+            notes = notes,
+            personPhotoPath = personPhotoPath,
+            idPhotoPath = idPhotoPath,
+            machinePhotoPath = machinePhotoPath,
+            paymentMode = depositMethod
         )
 
         // 3. Save job sheet and decrement stock
         db.jobSheetDao().insertJobSheet(jobSheet)
         db.machineDao().decrementStock(machine.id, quantity)
 
-        // 4. Record deposit payment if amount > 0
+        // 4. Record advance received as the first payment entry with its mode of payment
         if (depositAmount > 0) {
             db.paymentDao().insertPayment(
                 PaymentEntity(
@@ -142,10 +152,11 @@ class BabaRepository(private val db: AppDatabase) {
                     jobSheetId = jobId,
                     amount = depositAmount,
                     method = depositMethod,
-                    type = "deposit",
+                    type = "advance",
                     timestamp = now,
                     handledBy = checkoutUser.id,
-                    handledByName = checkoutUser.name
+                    handledByName = checkoutUser.name,
+                    remark = "Advance received at checkout"
                 )
             )
         }
@@ -159,9 +170,14 @@ class BabaRepository(private val db: AppDatabase) {
                 performedBy = checkoutUser.id,
                 performedByName = checkoutUser.name,
                 timestamp = now,
-                changeSummary = "${checkoutUser.name} billed job sheet $jobId (Handled by ${handledUser.name}) for ${customer.name} (${machine.name}, Qty: $quantity, Rate: ₹$rateUsed, Deposit: ₹$depositAmount)"
+                changeSummary = "${checkoutUser.name} billed job sheet $jobId for ${customer.name} (${machine.name}, Qty: $quantity, Rate: ₹$rateUsed, Advance: ₹$depositAmount via $depositMethod)"
             )
         )
+
+        // 6. Schedule offline alarms for due date & overdue alert
+        if (context != null) {
+            com.example.util.DueAlarmScheduler.scheduleAlarms(context, jobSheet)
+        }
 
         return jobSheet
     }
@@ -192,27 +208,85 @@ class BabaRepository(private val db: AppDatabase) {
         )
     }
 
+    suspend fun addExtraPayment(
+        jobSheetId: String,
+        amount: Double,
+        paymentMode: String,
+        currentUser: UserEntity,
+        remark: String = ""
+    ): Boolean {
+        val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return false
+        val now = System.currentTimeMillis()
+
+        // Insert payment entry
+        db.paymentDao().insertPayment(
+            PaymentEntity(
+                id = UUID.randomUUID().toString(),
+                jobSheetId = jobSheet.id,
+                amount = amount,
+                method = paymentMode,
+                type = "extra",
+                timestamp = now,
+                handledBy = currentUser.id,
+                handledByName = currentUser.name,
+                remark = remark.ifEmpty { "Extra payment added" }
+            )
+        )
+
+        // Update depositAmount to immediately reflect updated balance
+        val updatedJob = jobSheet.copy(
+            depositAmount = jobSheet.depositAmount + amount,
+            finalSettlement = jobSheet.finalSettlement - amount
+        )
+        db.jobSheetDao().updateJobSheet(updatedJob)
+
+        db.activityLogDao().insertLog(
+            ActivityLogEntity(
+                id = UUID.randomUUID().toString(),
+                jobSheetId = jobSheet.id,
+                action = "payment",
+                performedBy = currentUser.id,
+                performedByName = currentUser.name,
+                timestamp = now,
+                changeSummary = "${currentUser.name} received extra payment ₹$amount ($paymentMode) for job sheet ${jobSheet.id}. Remark: $remark"
+            )
+        )
+
+        return true
+    }
+
     suspend fun markReturned(
         jobSheetId: String,
         settlementMethod: String,
         currentUser: UserEntity,
-        returnTime: Long = System.currentTimeMillis()
+        returnTime: Long = System.currentTimeMillis(),
+        remark: String = "",
+        context: Context? = null
     ): JobSheetEntity? {
         val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return null
         val calc = calculateReturnBill(jobSheet, returnTime)
 
         val updatedJob = jobSheet.copy(
             returnTime = returnTime,
-            status = "returned",
+            returnedBy = currentUser.id,
+            returnedByName = currentUser.name,
+            closedBy = currentUser.id,
+            closedByName = currentUser.name,
+            status = "closed",
             lateFee = calc.lateFee,
             totalRentalFee = calc.netTotalFee,
-            finalSettlement = calc.balanceDueOrRefund
+            finalSettlement = calc.balanceDueOrRefund,
+            returnRemark = remark
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
         db.machineDao().incrementStock(jobSheet.machineId, jobSheet.quantity)
 
-        // Record settlement payment if non-zero
+        if (context != null) {
+            com.example.util.DueAlarmScheduler.cancelAlarms(context, jobSheet.id)
+        }
+
+        // Record settlement, refund, or NIL return entry
         if (calc.balanceDueOrRefund > 0) {
             db.paymentDao().insertPayment(
                 PaymentEntity(
@@ -223,7 +297,8 @@ class BabaRepository(private val db: AppDatabase) {
                     type = "settlement",
                     timestamp = returnTime,
                     handledBy = currentUser.id,
-                    handledByName = currentUser.name
+                    handledByName = currentUser.name,
+                    remark = remark.ifEmpty { "Final settlement collected" }
                 )
             )
         } else if (calc.balanceDueOrRefund < 0) {
@@ -236,18 +311,29 @@ class BabaRepository(private val db: AppDatabase) {
                     type = "refund",
                     timestamp = returnTime,
                     handledBy = currentUser.id,
-                    handledByName = currentUser.name
+                    handledByName = currentUser.name,
+                    remark = remark.ifEmpty { "Deposit refund returned" }
+                )
+            )
+        } else {
+            // No payment collected at return -> Record NIL with Remark for Sales Report
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheet.id,
+                    amount = 0.0,
+                    method = settlementMethod,
+                    type = "return_nil",
+                    timestamp = returnTime,
+                    handledBy = currentUser.id,
+                    handledByName = currentUser.name,
+                    remark = if (remark.isNotBlank()) remark else "Closed with NIL payment"
                 )
             )
         }
 
         // Log
-        val summary = if (calc.daysLate > 0) {
-            "${currentUser.name} marked ${jobSheet.id} returned (LATE by ${calc.daysLate}d, late fee: ₹${calc.lateFee}, net: ₹${calc.netTotalFee})"
-        } else {
-            "${currentUser.name} marked ${jobSheet.id} returned (On time, total: ₹${calc.netTotalFee})"
-        }
-
+        val summary = "${currentUser.name} closed job sheet ${jobSheet.id}. Remark: ${remark.ifEmpty { "None" }}. Total fee: ₹${calc.netTotalFee}, Settlement: ₹${calc.balanceDueOrRefund}"
         db.activityLogDao().insertLog(
             ActivityLogEntity(
                 id = UUID.randomUUID().toString(),
@@ -271,37 +357,7 @@ class BabaRepository(private val db: AppDatabase) {
         newNotes: String,
         currentUser: UserEntity
     ) {
-        val job = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return
-
-        // Adjust stock if quantity changed and still active
-        if (job.status == "active" && newQuantity != job.quantity) {
-            val diff = newQuantity - job.quantity
-            if (diff > 0) {
-                db.machineDao().decrementStock(job.machineId, diff)
-            } else {
-                db.machineDao().incrementStock(job.machineId, kotlin.math.abs(diff))
-            }
-        }
-
-        val updated = job.copy(
-            quantity = newQuantity,
-            rateUsed = newRate,
-            discount = newDiscount,
-            notes = newNotes
-        )
-        db.jobSheetDao().updateJobSheet(updated)
-
-        db.activityLogDao().insertLog(
-            ActivityLogEntity(
-                id = UUID.randomUUID().toString(),
-                jobSheetId = job.id,
-                action = "edited",
-                performedBy = currentUser.id,
-                performedByName = currentUser.name,
-                timestamp = System.currentTimeMillis(),
-                changeSummary = "${currentUser.name} edited job sheet ${job.id} (Qty: ${job.quantity}->${newQuantity}, Rate: ₹${job.rateUsed}->₹${newRate}, Discount: ₹${job.discount}->₹${newDiscount})"
-            )
-        )
+        throw IllegalStateException("Editing job sheets is strictly prohibited. Corrections must be made only by adding payments or remarks.")
     }
 
     suspend fun softDeleteJobSheet(
@@ -309,27 +365,47 @@ class BabaRepository(private val db: AppDatabase) {
         reason: String,
         currentUser: UserEntity
     ) {
-        val job = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return
-
-        // Restore stock if it was active
-        if (job.status == "active" || job.status == "overdue") {
-            db.machineDao().incrementStock(job.machineId, job.quantity)
-        }
-
-        db.jobSheetDao().softDeleteJobSheet(jobSheetId)
-
-        db.activityLogDao().insertLog(
-            ActivityLogEntity(
-                id = UUID.randomUUID().toString(),
-                jobSheetId = job.id,
-                action = "deleted",
-                performedBy = currentUser.id,
-                performedByName = currentUser.name,
-                timestamp = System.currentTimeMillis(),
-                changeSummary = "${currentUser.name} deleted job sheet ${job.id} (${job.customerName}, ${job.machineName}). Reason: $reason"
-            )
-        )
+        throw IllegalStateException("Deleting job sheets is strictly prohibited by client business policy.")
     }
+
+    // --- Daily Cash Management (Opening & Closing Cash) ---
+    suspend fun getOpeningCashForDate(dateStr: String): Double {
+        val existing = db.dailyCashDao().getDailyCash(dateStr)
+        if (existing != null) return existing.openingCash
+        val previous = db.dailyCashDao().getPreviousDailyCash(dateStr)
+        return previous?.closingCash ?: 0.0
+    }
+
+    suspend fun saveOpeningCash(dateStr: String, openingAmount: Double, user: UserEntity) {
+        val existing = db.dailyCashDao().getDailyCash(dateStr)
+        val entity = DailyCashEntity(
+            date = dateStr,
+            openingCash = openingAmount,
+            closingCash = existing?.closingCash ?: 0.0,
+            enteredBy = user.id,
+            enteredByName = user.name,
+            updatedAt = System.currentTimeMillis()
+        )
+        db.dailyCashDao().insertOrUpdate(entity)
+    }
+
+    suspend fun saveClosingCash(dateStr: String, closingAmount: Double, user: UserEntity) {
+        val existing = db.dailyCashDao().getDailyCash(dateStr)
+        val opening = existing?.openingCash ?: getOpeningCashForDate(dateStr)
+        val entity = DailyCashEntity(
+            date = dateStr,
+            openingCash = opening,
+            closingCash = closingAmount,
+            enteredBy = user.id,
+            enteredByName = user.name,
+            updatedAt = System.currentTimeMillis()
+        )
+        db.dailyCashDao().insertOrUpdate(entity)
+    }
+
+    fun getDailyCashFlow(dateStr: String): Flow<DailyCashEntity?> = db.dailyCashDao().getDailyCashFlow(dateStr)
+    fun getAllDailyCashFlow(): Flow<List<DailyCashEntity>> = db.dailyCashDao().getAllDailyCash()
+    fun getPaymentsForJobSheet(jobSheetId: String): Flow<List<PaymentEntity>> = db.paymentDao().getPaymentsForJobSheet(jobSheetId)
 
     // CSV Export functionality for Owner reports
     fun exportReportCsv(context: Context, jobSheets: List<JobSheetEntity>): Uri? {

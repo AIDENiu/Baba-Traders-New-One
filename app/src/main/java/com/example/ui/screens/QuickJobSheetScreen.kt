@@ -50,6 +50,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,6 +76,10 @@ fun QuickJobSheetScreen(
         checkoutUser: UserEntity,
         handledUser: UserEntity,
         notes: String,
+        personPhotoPath: String?,
+        idPhotoPath: String?,
+        machinePhotoPath: String?,
+        dueTimeMillis: Long?,
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) -> Unit,
@@ -99,6 +106,8 @@ fun QuickJobSheetScreen(
     var isReturningCustomer by remember { mutableStateOf(false) }
     var idPhotoFrontPath by remember { mutableStateOf<String?>(null) }
     var idPhotoBackPath by remember { mutableStateOf<String?>(null) }
+    var personPhotoPath by remember { mutableStateOf<String?>(null) }
+    var machinePhotoPath by remember { mutableStateOf<String?>(null) }
 
     // Machine fields
     var selectedCategoryId by remember(categories) { mutableStateOf(categories.firstOrNull()?.id ?: "") }
@@ -112,15 +121,17 @@ fun QuickJobSheetScreen(
     var rateText by remember(selectedMachine) { mutableStateOf((selectedMachine?.currentRate ?: 350.0).toString()) }
     var discountText by remember { mutableStateOf("0") }
     var billingCycle by remember { mutableStateOf("24hr") } // "24hr" or "working_hours"
+    var dueTimeMillis by remember { mutableStateOf(System.currentTimeMillis() + (24 * 60 * 60 * 1000L)) }
     var depositText by remember { mutableStateOf("500") }
-    var depositMethod by remember { mutableStateOf("cash") } // "cash", "upi", "card"
+    var depositMethod by remember { mutableStateOf("cash") } // "cash", "upi", "card", "bank"
     var notes by remember { mutableStateOf("") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var createdJobSheetForReceipt by remember { mutableStateOf<JobSheetEntity?>(null) }
 
     // Photo Capture / Gallery State
-    var activePhotoSide by remember { mutableStateOf<String?>(null) } // "front" or "back"
+    // activePhotoSide: "person", "machine", "id_front", "id_back" (or legacy "front"/"back")
+    var activePhotoSide by remember { mutableStateOf<String?>(null) }
     var showPhotoSourceDialog by remember { mutableStateOf(false) }
     var tempCameraFile by remember { mutableStateOf<File?>(null) }
     var previewPhotoPath by remember { mutableStateOf<String?>(null) }
@@ -131,12 +142,13 @@ fun QuickJobSheetScreen(
         if (success) {
             val path = tempCameraFile?.absolutePath
             if (path != null) {
-                if (activePhotoSide == "front") {
-                    idPhotoFrontPath = path
-                } else {
-                    idPhotoBackPath = path
+                when (activePhotoSide) {
+                    "person" -> personPhotoPath = path
+                    "machine" -> machinePhotoPath = path
+                    "id_front", "front" -> idPhotoFrontPath = path
+                    "id_back", "back" -> idPhotoBackPath = path
                 }
-                Toast.makeText(context, "${if (activePhotoSide == "front") "Front" else "Back"} ID photo captured", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Photo captured locally", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -145,8 +157,8 @@ fun QuickJobSheetScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            val side = activePhotoSide ?: "front"
-            val file = File(context.filesDir, "id_${side}_${System.currentTimeMillis()}.jpg")
+            val tag = activePhotoSide ?: "photo"
+            val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
             tempCameraFile = file
             try {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -165,17 +177,18 @@ fun QuickJobSheetScreen(
         if (uri != null) {
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val side = activePhotoSide ?: "front"
-                    val file = File(context.filesDir, "id_${side}_${System.currentTimeMillis()}.jpg")
+                    val tag = activePhotoSide ?: "photo"
+                    val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         FileOutputStream(file).use { output ->
                             input.copyTo(output)
                         }
                     }
-                    if (side == "front") {
-                        idPhotoFrontPath = file.absolutePath
-                    } else {
-                        idPhotoBackPath = file.absolutePath
+                    when (activePhotoSide) {
+                        "person" -> personPhotoPath = file.absolutePath
+                        "machine" -> machinePhotoPath = file.absolutePath
+                        "id_front", "front" -> idPhotoFrontPath = file.absolutePath
+                        "id_back", "back" -> idPhotoBackPath = file.absolutePath
                     }
                 } catch (e: Exception) {
                     // handled
@@ -187,8 +200,8 @@ fun QuickJobSheetScreen(
     fun startCameraCapture() {
         val permission = Manifest.permission.CAMERA
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
-            val side = activePhotoSide ?: "front"
-            val file = File(context.filesDir, "id_${side}_${System.currentTimeMillis()}.jpg")
+            val tag = activePhotoSide ?: "photo"
+            val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
             tempCameraFile = file
             try {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -599,6 +612,62 @@ fun QuickJobSheetScreen(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Explicit Due Date Selector
+                    Text("Rental Due Date *", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    val dateFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BabaBg,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Event, contentDescription = "Due Date", tint = BabaRed)
+                                Column {
+                                    Text(
+                                        text = dateFormat.format(Date(dueTimeMillis)),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = BabaDark
+                                    )
+                                    Text(
+                                        text = "Alarms fire 2h before and on due date",
+                                        fontSize = 10.sp,
+                                        color = BabaGray
+                                    )
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(
+                                    onClick = {
+                                        val dayMs = 24 * 60 * 60 * 1000L
+                                        if (dueTimeMillis - dayMs > System.currentTimeMillis()) {
+                                            dueTimeMillis -= dayMs
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "-1 Day", tint = BabaDark)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        dueTimeMillis += 24 * 60 * 60 * 1000L
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "+1 Day", tint = BabaRed)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -644,10 +713,15 @@ fun QuickJobSheetScreen(
                             shape = RoundedCornerShape(10.dp)
                         )
 
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Deposit Method", fontSize = 11.sp, color = BabaGray)
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf("cash" to "Cash", "upi" to "UPI").forEach { (methodKey, label) ->
+                        Column(modifier = Modifier.weight(1.3f)) {
+                            Text("Mode of Payment *", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.SemiBold)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (methodKey, label) ->
                                     FilterChip(
                                         selected = depositMethod == methodKey,
                                         onClick = { depositMethod = methodKey },
@@ -658,24 +732,25 @@ fun QuickJobSheetScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Customer ID Document (Stored Locally Only)
+                    // Mandatory Local Photos: Person, ID, Machine (Stored Locally Only)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Customer ID Document (Stored Locally Only)",
+                            text = "Customer & ID Photos (App-Private Storage Only)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = BabaDark
                         )
                         Text(
-                            text = "Aadhaar / DL",
+                            text = "Never uploaded to cloud",
                             fontSize = 10.sp,
-                            color = BabaGray
+                            color = BabaSuccess,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
@@ -684,12 +759,29 @@ fun QuickJobSheetScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Front Photo Card
+                        // Person Photo Card
                         IdDocumentCard(
-                            title = "Front Photo",
+                            title = "Person Photo *",
+                            imagePath = personPhotoPath,
+                            onCardClick = {
+                                activePhotoSide = "person"
+                                showPhotoSourceDialog = true
+                            },
+                            onPreviewClick = {
+                                previewPhotoPath = personPhotoPath
+                            },
+                            onRemoveClick = {
+                                personPhotoPath = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // ID Photo Front Card
+                        IdDocumentCard(
+                            title = "ID Document *",
                             imagePath = idPhotoFrontPath,
                             onCardClick = {
-                                activePhotoSide = "front"
+                                activePhotoSide = "id_front"
                                 showPhotoSourceDialog = true
                             },
                             onPreviewClick = {
@@ -700,13 +792,37 @@ fun QuickJobSheetScreen(
                             },
                             modifier = Modifier.weight(1f)
                         )
+                    }
 
-                        // Back Photo Card
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Machine Photo Card
                         IdDocumentCard(
-                            title = "Back Photo",
+                            title = "Machine Photo *",
+                            imagePath = machinePhotoPath,
+                            onCardClick = {
+                                activePhotoSide = "machine"
+                                showPhotoSourceDialog = true
+                            },
+                            onPreviewClick = {
+                                previewPhotoPath = machinePhotoPath
+                            },
+                            onRemoveClick = {
+                                machinePhotoPath = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // ID Back Photo (Optional / Secondary)
+                        IdDocumentCard(
+                            title = "ID Back (Opt)",
                             imagePath = idPhotoBackPath,
                             onCardClick = {
-                                activePhotoSide = "back"
+                                activePhotoSide = "id_back"
                                 showPhotoSourceDialog = true
                             },
                             onPreviewClick = {
@@ -740,94 +856,67 @@ fun QuickJobSheetScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .background(BabaRed, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("5", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        Text(
-                            text = "Staff Accountability (Checkout & Handling)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = BabaDark
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Checkout By selector
-                    Text(
-                        text = "Checkout By (Billed & Collected Money) *",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BabaDark
-                    )
-                    Text(
-                        text = "Staff member who processed billing & collected money",
-                        fontSize = 10.sp,
-                        color = BabaGray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        activeStaffList.forEach { staff ->
-                            FilterChip(
-                                selected = selectedCheckoutUser.id == staff.id,
-                                onClick = { selectedCheckoutUser = staff },
-                                label = {
-                                    Text(
-                                        text = "${staff.name} (${staff.role.replaceFirstChar { it.uppercase() }})",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (selectedCheckoutUser.id == staff.id) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                leadingIcon = if (selectedCheckoutUser.id == staff.id) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(BabaRed, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("5", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Text(
+                                text = "Checkout Attribution (Automatic)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = BabaDark
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = BabaSuccessLight
+                        ) {
+                            Text(
+                                text = "SESSION LOCKED",
+                                color = BabaSuccess,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Handled By selector
-                    Text(
-                        text = "Handled By (Equipment Prepared & Handed Over) *",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BabaDark
-                    )
-                    Text(
-                        text = "Staff member who physically prepared, tested, or handed over machinery",
-                        fontSize = 10.sp,
-                        color = BabaGray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BabaBg,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        activeStaffList.forEach { staff ->
-                            FilterChip(
-                                selected = selectedHandledUser.id == staff.id,
-                                onClick = { selectedHandledUser = staff },
-                                label = {
-                                    Text(
-                                        text = "${staff.name} (${staff.role.replaceFirstChar { it.uppercase() }})",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (selectedHandledUser.id == staff.id) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                leadingIcon = if (selectedHandledUser.id == staff.id) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
-                            )
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = BabaRed)
+                            Column {
+                                Text(
+                                    text = "Checked Out & Handled By: ${currentUser.name}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = BabaDark
+                                )
+                                Text(
+                                    text = "Derived automatically from active session (${currentUser.role.replaceFirstChar { it.uppercase() }}). No manual staff selection allowed.",
+                                    fontSize = 11.sp,
+                                    color = BabaGray
+                                )
+                            }
                         }
                     }
                 }
@@ -858,6 +947,28 @@ fun QuickJobSheetScreen(
                         errorMessage = "Please enter customer phone and name"
                         return@Button
                     }
+                    val cleanPhone = custPhone.filter { it.isDigit() }
+                    if (cleanPhone.length < 10) {
+                        errorMessage = "Customer phone must be a valid 10-digit number"
+                        return@Button
+                    }
+                    val loc = customerAddress.trim()
+                    if (loc.isEmpty()) {
+                        errorMessage = "Location / Site address is mandatory and cannot be skipped"
+                        return@Button
+                    }
+                    if (personPhotoPath == null) {
+                        errorMessage = "Customer person photo is mandatory (stored locally on device only)"
+                        return@Button
+                    }
+                    if (idPhotoFrontPath == null && idPhotoBackPath == null) {
+                        errorMessage = "Customer ID document photo is mandatory (stored locally on device only)"
+                        return@Button
+                    }
+                    if (machinePhotoPath == null) {
+                        errorMessage = "Machine photo is mandatory (stored locally on device only)"
+                        return@Button
+                    }
                     val machine = selectedMachine
                     if (machine == null) {
                         errorMessage = "Please select a machine"
@@ -882,10 +993,10 @@ fun QuickJobSheetScreen(
                     }
 
                     val customer = CustomerEntity(
-                        id = "cust_" + (custPhone.ifEmpty { UUID.randomUUID().toString() }),
+                        id = "cust_" + (cleanPhone.ifEmpty { UUID.randomUUID().toString() }),
                         name = custName,
-                        phone = custPhone,
-                        address = customerAddress.trim(),
+                        phone = cleanPhone,
+                        address = loc,
                         idPhotoFrontPath = idPhotoFrontPath,
                         idPhotoBackPath = idPhotoBackPath
                     )
@@ -902,9 +1013,13 @@ fun QuickJobSheetScreen(
                         deposit,
                         depositMethod,
                         billingCycle,
-                        selectedCheckoutUser,
-                        selectedHandledUser,
+                        currentUser,
+                        currentUser,
                         notes,
+                        personPhotoPath,
+                        idPhotoFrontPath ?: idPhotoBackPath,
+                        machinePhotoPath,
+                        dueTimeMillis,
                         { createdJob ->
                             createdJobSheetForReceipt = createdJob
                         },
@@ -947,8 +1062,20 @@ fun QuickJobSheetScreen(
 
     // Photo Source Selection Dialog (Camera vs Gallery)
     if (showPhotoSourceDialog) {
-        val sideLabel = if (activePhotoSide == "front") "Front" else "Back"
-        val existingPath = if (activePhotoSide == "front") idPhotoFrontPath else idPhotoBackPath
+        val sideLabel = when (activePhotoSide) {
+            "person" -> "Person"
+            "machine" -> "Machine"
+            "id_front", "front" -> "ID Document Front"
+            "id_back", "back" -> "ID Document Back"
+            else -> "Photo"
+        }
+        val existingPath = when (activePhotoSide) {
+            "person" -> personPhotoPath
+            "machine" -> machinePhotoPath
+            "id_front", "front" -> idPhotoFrontPath
+            "id_back", "back" -> idPhotoBackPath
+            else -> null
+        }
 
         AlertDialog(
             onDismissRequest = { showPhotoSourceDialog = false },
@@ -964,7 +1091,7 @@ fun QuickJobSheetScreen(
                         modifier = Modifier.size(24.dp)
                     )
                     Text(
-                        text = "Add $sideLabel ID Photo",
+                        text = "Add $sideLabel Photo",
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         color = BabaDark
@@ -977,7 +1104,7 @@ fun QuickJobSheetScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Choose how to capture or select customer ID document (stored locally on this device only):",
+                        text = "Choose how to capture or select photo (stored locally on this device only):",
                         fontSize = 12.sp,
                         color = BabaGray
                     )
@@ -1136,10 +1263,11 @@ fun QuickJobSheetScreen(
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(1.dp, BabaOverdue.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
                                 .clickable {
-                                    if (activePhotoSide == "front") {
-                                        idPhotoFrontPath = null
-                                    } else {
-                                        idPhotoBackPath = null
+                                    when (activePhotoSide) {
+                                        "person" -> personPhotoPath = null
+                                        "machine" -> machinePhotoPath = null
+                                        "id_front", "front" -> idPhotoFrontPath = null
+                                        "id_back", "back" -> idPhotoBackPath = null
                                     }
                                     showPhotoSourceDialog = false
                                 },

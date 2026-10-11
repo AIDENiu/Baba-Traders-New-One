@@ -91,6 +91,8 @@ class FirestoreSyncService(
                                 val checkoutByName = doc.getString("checkoutByName") ?: ""
                                 val handledBy = doc.getString("handledByUid") ?: doc.getString("handledBy") ?: ""
                                 val handledByName = doc.getString("handledByName") ?: ""
+                                val returnedBy = doc.getString("returnedByUid") ?: doc.getString("returnedBy") ?: ""
+                                val returnedByName = doc.getString("returnedByName") ?: ""
                                 val isDeleted = doc.getBoolean("isDeleted") ?: false
                                 val lateFee = (doc.get("lateFee") as? Number)?.toDouble() ?: 0.0
                                 val totalRentalFee = (doc.get("totalRentalFee") as? Number)?.toDouble() ?: 0.0
@@ -110,7 +112,6 @@ class FirestoreSyncService(
                                     rateUsed = rateUsed,
                                     discount = discount,
                                     depositAmount = depositAmount,
-                                    depositMethod = depositMethod,
                                     billingCycle = billingCycle,
                                     checkoutTime = checkoutTime,
                                     dueTime = dueTime,
@@ -123,6 +124,8 @@ class FirestoreSyncService(
                                     checkoutByName = checkoutByName,
                                     handledBy = handledBy,
                                     handledByName = handledByName,
+                                    returnedBy = returnedBy,
+                                    returnedByName = returnedByName,
                                     notes = notes,
                                     isDeleted = isDeleted
                                 )
@@ -160,11 +163,11 @@ class FirestoreSyncService(
                                     id = id,
                                     categoryId = categoryId,
                                     name = name,
-                                    baseDailyRate = baseDailyRate,
+                                    baseRate = baseDailyRate,
                                     currentRate = dailyRate,
                                     totalQty = totalQty,
                                     availableQty = availableQty,
-                                    specs = specs
+                                    modelOrSpecs = specs
                                 )
                                 roomDb.machineDao().insertMachine(machine)
                             } catch (e: Exception) {
@@ -278,7 +281,7 @@ class FirestoreSyncService(
             "rateUsed" to jobSheet.rateUsed,
             "discount" to jobSheet.discount,
             "deposit" to jobSheet.depositAmount,
-            "depositMethod" to jobSheet.depositMethod,
+            "depositMethod" to "cash",
             "billingCycleType" to jobSheet.billingCycle,
             "startTime" to jobSheet.checkoutTime,
             "dueTime" to jobSheet.dueTime,
@@ -288,6 +291,8 @@ class FirestoreSyncService(
             "checkoutByName" to jobSheet.checkoutByName,
             "handledByUid" to jobSheet.handledBy,
             "handledByName" to jobSheet.handledByName,
+            "returnedByUid" to jobSheet.returnedBy,
+            "returnedByName" to jobSheet.returnedByName,
             "isDeleted" to jobSheet.isDeleted,
             "lateFee" to jobSheet.lateFee,
             "totalRentalFee" to jobSheet.totalRentalFee,

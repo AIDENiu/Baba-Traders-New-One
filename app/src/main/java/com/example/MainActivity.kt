@@ -17,10 +17,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.JobSheetEntity
 import com.example.data.repository.ReturnCalculation
-import com.example.ui.components.EditJobDialog
+import com.example.ui.components.AddExtraPaymentDialog
+import com.example.ui.components.PaymentHistoryDialog
 import com.example.ui.components.ReceiptDialog
 import com.example.ui.components.ReturnJobDialog
-import com.example.ui.components.SoftDeleteDialog
 import com.example.ui.screens.*
 import com.example.ui.theme.BabaJobSheetTheme
 import com.example.ui.viewmodel.BabaViewModel
@@ -70,8 +70,8 @@ fun BabaAppContent(viewModel: BabaViewModel) {
     // Dialog States
     var jobToReturn by remember { mutableStateOf<JobSheetEntity?>(null) }
     var returnCalculation by remember { mutableStateOf<ReturnCalculation?>(null) }
-    var jobToEdit by remember { mutableStateOf<JobSheetEntity?>(null) }
-    var jobToDelete by remember { mutableStateOf<JobSheetEntity?>(null) }
+    var jobToAddPayment by remember { mutableStateOf<JobSheetEntity?>(null) }
+    var jobForPaymentHistory by remember { mutableStateOf<JobSheetEntity?>(null) }
     var jobForReceipt by remember { mutableStateOf<JobSheetEntity?>(null) }
 
     // Synchronize current screen with user role
@@ -107,8 +107,8 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                             jobToReturn = job
                             returnCalculation = viewModel.calculateReturnBill(job)
                         },
-                        onEditJobClick = { job -> jobToEdit = job },
-                        onDeleteJobClick = { job -> jobToDelete = job },
+                        onAddPaymentClick = { job -> jobToAddPayment = job },
+                        onViewPaymentHistoryClick = { job -> jobForPaymentHistory = job },
                         onViewReceiptClick = { job -> jobForReceipt = job },
                         onSwitchUser = {
                             viewModel.logout()
@@ -157,7 +157,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         categories = categories,
                         machines = machines,
                         onFindCustomerByPhone = { phone -> viewModel.findCustomerByPhone(phone) },
-                        onCreateJobSheet = { customer, machine, categoryName, qty, rate, discount, deposit, method, cycle, checkoutUser, handledUser, notes, onSuccess, onError ->
+                        onCreateJobSheet = { customer, machine, categoryName, qty, rate, discount, deposit, method, cycle, checkoutUser, handledUser, notes, personPhoto, idPhoto, machinePhoto, dueTime, onSuccess, onError ->
                             viewModel.createJobSheet(
                                 customer = customer,
                                 machine = machine,
@@ -171,6 +171,11 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 checkoutUser = checkoutUser,
                                 handledUser = handledUser,
                                 notes = notes,
+                                personPhotoPath = personPhoto,
+                                idPhotoPath = idPhoto,
+                                machinePhotoPath = machinePhoto,
+                                explicitDueTime = dueTime,
+                                context = context,
                                 onSuccess = onSuccess,
                                 onError = onError
                             )
@@ -192,8 +197,8 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                             jobToReturn = job
                             returnCalculation = viewModel.calculateReturnBill(job)
                         },
-                        onEditJob = { job -> jobToEdit = job },
-                        onDeleteJob = { job -> jobToDelete = job },
+                        onAddPayment = { job -> jobToAddPayment = job },
+                        onViewPaymentHistory = { job -> jobForPaymentHistory = job },
                         onViewReceipt = { job -> jobForReceipt = job },
                         onNavigateBack = {
                             currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
@@ -259,7 +264,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
 
             "reports" -> {
                 val user = currentUser
-                if (user != null) {
+                if (user != null && user.role == "owner") {
                     ReportsScreen(
                         currentUser = user,
                         allJobSheets = allJobSheets,
@@ -268,9 +273,11 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                             viewModel.exportReport(context)
                         },
                         onNavigateBack = {
-                            currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
+                            currentScreen = "owner_dashboard"
                         }
                     )
+                } else {
+                    currentScreen = "worker_home"
                 }
             }
 
@@ -322,15 +329,17 @@ fun BabaAppContent(viewModel: BabaViewModel) {
             ReturnJobDialog(
                 jobSheet = jobToReturn!!,
                 calculation = returnCalculation!!,
-                onConfirmReturn = { paymentMethod ->
+                onConfirmReturn = { paymentMethod, remark ->
                     viewModel.returnJob(
                         jobSheetId = jobToReturn!!.id,
                         settlementMethod = paymentMethod,
+                        remark = remark,
+                        context = context,
                         onSuccess = { updated ->
                             jobToReturn = null
                             returnCalculation = null
                             jobForReceipt = updated
-                            Toast.makeText(context, "Job marked as returned & stock restored", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Job closed & machinery restored to stock", Toast.LENGTH_SHORT).show()
                         },
                         onError = { err ->
                             Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
@@ -344,50 +353,39 @@ fun BabaAppContent(viewModel: BabaViewModel) {
             )
         }
 
-        // Shared Edit Dialog
-        if (jobToEdit != null && currentUser != null) {
-            EditJobDialog(
-                jobSheet = jobToEdit!!,
+        // Shared Add Extra Payment Dialog
+        if (jobToAddPayment != null && currentUser != null) {
+            AddExtraPaymentDialog(
+                jobSheet = jobToAddPayment!!,
                 currentUser = currentUser!!,
-                onConfirmEdit = { newQty, newRate, newDiscount, newNotes ->
-                    viewModel.editJobSheet(
-                        jobSheetId = jobToEdit!!.id,
-                        newQuantity = newQty,
-                        newRate = newRate,
-                        newDiscount = newDiscount,
-                        newNotes = newNotes,
+                onConfirmPayment = { amount, method, remark ->
+                    viewModel.addExtraPayment(
+                        jobSheetId = jobToAddPayment!!.id,
+                        amount = amount,
+                        paymentMode = method,
+                        remark = remark,
                         onSuccess = {
-                            jobToEdit = null
-                            Toast.makeText(context, "Job sheet updated", Toast.LENGTH_SHORT).show()
+                            jobToAddPayment = null
+                            Toast.makeText(context, "Extra payment recorded successfully", Toast.LENGTH_SHORT).show()
                         },
                         onError = { err ->
                             Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                         }
                     )
                 },
-                onDismiss = { jobToEdit = null }
+                onDismiss = { jobToAddPayment = null }
             )
         }
 
-        // Shared Soft Delete Dialog
-        if (jobToDelete != null && currentUser != null) {
-            SoftDeleteDialog(
-                jobSheet = jobToDelete!!,
-                currentUser = currentUser!!,
-                onConfirmDelete = { reason ->
-                    viewModel.softDeleteJobSheet(
-                        jobSheetId = jobToDelete!!.id,
-                        reason = reason,
-                        onSuccess = {
-                            jobToDelete = null
-                            Toast.makeText(context, "Job soft-deleted and stock restored", Toast.LENGTH_SHORT).show()
-                        },
-                        onError = { err ->
-                            Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
-                        }
-                    )
-                },
-                onDismiss = { jobToDelete = null }
+        // Shared Payment History Dialog
+        if (jobForPaymentHistory != null) {
+            val jobPayments = remember(payments, jobForPaymentHistory) {
+                payments.filter { it.jobSheetId == jobForPaymentHistory!!.id }
+            }
+            PaymentHistoryDialog(
+                jobSheet = jobForPaymentHistory!!,
+                payments = jobPayments,
+                onDismiss = { jobForPaymentHistory = null }
             )
         }
 

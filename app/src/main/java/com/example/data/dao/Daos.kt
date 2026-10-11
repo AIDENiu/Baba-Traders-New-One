@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Update
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
+import com.example.data.model.DailyCashEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
@@ -43,6 +44,9 @@ interface CustomerDao {
     @Query("SELECT * FROM customers ORDER BY createdAt DESC")
     fun getAllCustomers(): Flow<List<CustomerEntity>>
 
+    @Query("SELECT * FROM customers ORDER BY createdAt DESC")
+    suspend fun getAllCustomersList(): List<CustomerEntity>
+
     @Query("SELECT * FROM customers WHERE phone = :phone LIMIT 1")
     suspend fun getCustomerByPhone(phone: String): CustomerEntity?
 
@@ -73,6 +77,9 @@ interface MachineDao {
     @Query("SELECT * FROM machines ORDER BY name ASC")
     fun getAllMachines(): Flow<List<MachineEntity>>
 
+    @Query("SELECT * FROM machines ORDER BY name ASC")
+    suspend fun getAllMachinesList(): List<MachineEntity>
+
     @Query("SELECT COUNT(*) FROM machines")
     suspend fun getMachineCount(): Int
 
@@ -100,6 +107,9 @@ interface JobSheetDao {
     @Query("SELECT * FROM job_sheets WHERE isDeleted = 0 ORDER BY checkoutTime DESC")
     fun getAllJobSheets(): Flow<List<JobSheetEntity>>
 
+    @Query("SELECT * FROM job_sheets ORDER BY checkoutTime DESC")
+    suspend fun getAllJobSheetsList(): List<JobSheetEntity>
+
     @Query("SELECT * FROM job_sheets WHERE isDeleted = 0 AND status = 'active' ORDER BY dueTime ASC")
     fun getActiveJobSheets(): Flow<List<JobSheetEntity>>
 
@@ -123,9 +133,6 @@ interface JobSheetDao {
 
     @Update
     suspend fun updateJobSheet(jobSheet: JobSheetEntity)
-
-    @Query("UPDATE job_sheets SET isDeleted = 1 WHERE id = :id")
-    suspend fun softDeleteJobSheet(id: String)
 }
 
 @Dao
@@ -136,6 +143,9 @@ interface PaymentDao {
     @Query("SELECT * FROM payments ORDER BY timestamp DESC")
     fun getAllPayments(): Flow<List<PaymentEntity>>
 
+    @Query("SELECT * FROM payments ORDER BY timestamp DESC")
+    suspend fun getAllPaymentsList(): List<PaymentEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: PaymentEntity)
 }
@@ -145,6 +155,27 @@ interface ActivityLogDao {
     @Query("SELECT * FROM activity_log ORDER BY timestamp DESC")
     fun getAllLogs(): Flow<List<ActivityLogEntity>>
 
+    @Query("SELECT * FROM activity_log ORDER BY timestamp DESC")
+    suspend fun getAllLogsList(): List<ActivityLogEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLog(log: ActivityLogEntity)
+}
+
+@Dao
+interface DailyCashDao {
+    @Query("SELECT * FROM daily_cash WHERE date = :date LIMIT 1")
+    suspend fun getDailyCash(date: String): DailyCashEntity?
+
+    @Query("SELECT * FROM daily_cash WHERE date = :date LIMIT 1")
+    fun getDailyCashFlow(date: String): Flow<DailyCashEntity?>
+
+    @Query("SELECT * FROM daily_cash ORDER BY date DESC")
+    fun getAllDailyCash(): Flow<List<DailyCashEntity>>
+
+    @Query("SELECT * FROM daily_cash WHERE date < :date ORDER BY date DESC LIMIT 1")
+    suspend fun getPreviousDailyCash(date: String): DailyCashEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdate(dailyCash: DailyCashEntity)
 }

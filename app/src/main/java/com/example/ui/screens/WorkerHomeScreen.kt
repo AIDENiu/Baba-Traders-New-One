@@ -34,8 +34,8 @@ fun WorkerHomeScreen(
     activeJobs: List<JobSheetEntity>,
     onNewJobSheetClick: () -> Unit,
     onReturnJobClick: (JobSheetEntity) -> Unit,
-    onEditJobClick: (JobSheetEntity) -> Unit,
-    onDeleteJobClick: (JobSheetEntity) -> Unit,
+    onAddPaymentClick: (JobSheetEntity) -> Unit,
+    onViewPaymentHistoryClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
     onSwitchUser: () -> Unit
 ) {
@@ -247,8 +247,8 @@ fun WorkerHomeScreen(
                             isOverdue = isOverdue,
                             dateFormat = dateFormat,
                             onReturn = { onReturnJobClick(job) },
-                            onEdit = { onEditJobClick(job) },
-                            onDelete = { onDeleteJobClick(job) },
+                            onAddPayment = { onAddPaymentClick(job) },
+                            onViewPaymentHistory = { onViewPaymentHistoryClick(job) },
                             onViewReceipt = { onViewReceiptClick(job) }
                         )
                     }
@@ -264,8 +264,8 @@ fun WorkerJobCard(
     isOverdue: Boolean,
     dateFormat: SimpleDateFormat,
     onReturn: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onAddPayment: () -> Unit,
+    onViewPaymentHistory: () -> Unit,
     onViewReceipt: () -> Unit
 ) {
     Card(
@@ -368,7 +368,7 @@ fun WorkerJobCard(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BabaBorder)
 
-            // Quick Actions: Mark Returned, Edit, Delete, Receipt
+            // Quick Actions: Mark Returned, Add Payment, Payment History, Receipt
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -383,7 +383,27 @@ fun WorkerJobCard(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = "Return", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Mark Returned", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Return", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // Add Extra Payment Button
+                Button(
+                    onClick = onAddPayment,
+                    colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1.3f).testTag("add_payment_job_${jobSheet.id}")
+                ) {
+                    Icon(Icons.Default.Payments, contentDescription = "Add Payment", tint = BabaYellow, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("+ Pay", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // History Icon Button
+                IconButton(
+                    onClick = onViewPaymentHistory,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.History, contentDescription = "Payment History", tint = BabaDark, modifier = Modifier.size(18.dp))
                 }
 
                 // Receipt Icon Button
@@ -392,22 +412,6 @@ fun WorkerJobCard(
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Default.Receipt, contentDescription = "Receipt", tint = BabaDark, modifier = Modifier.size(18.dp))
-                }
-
-                // Edit Icon Button
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BabaDark, modifier = Modifier.size(18.dp))
-                }
-
-                // Delete Icon Button (soft delete)
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = BabaOverdue, modifier = Modifier.size(18.dp))
                 }
             }
         }

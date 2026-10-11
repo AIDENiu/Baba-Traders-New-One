@@ -7,7 +7,10 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.backup.BackupFileInfo
+import com.example.data.backup.BackupManager
 import com.example.data.firebase.FirestoreSyncService
+import java.io.File
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
 import com.example.data.model.JobSheetEntity
@@ -165,6 +168,8 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             AppDatabase.ensureSeedData(db)
             syncService.startRealtimeListeners()
+            // Weekly automated backup (Data + Photos bundled together)
+            BackupManager.checkAndRunWeeklyBackup(application, db)
         }
 
         // Automatically monitor activity logs to trigger Owner Notifications if worker edited or deleted a job sheet
@@ -239,6 +244,11 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         checkoutUser: UserEntity,
         handledUser: UserEntity,
         notes: String,
+        personPhotoPath: String? = null,
+        idPhotoPath: String? = null,
+        machinePhotoPath: String? = null,
+        explicitDueTime: Long? = null,
+        context: Context? = null,
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -276,7 +286,12 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                     billingCycle = billingCycle,
                     checkoutUser = checkoutUser,
                     handledUser = handledUser,
-                    notes = notes
+                    notes = notes,
+                    personPhotoPath = personPhotoPath,
+                    idPhotoPath = idPhotoPath,
+                    machinePhotoPath = machinePhotoPath,
+                    explicitDueTime = explicitDueTime,
+                    context = context
                 )
                 onSuccess(created)
             } catch (e: Exception) {
@@ -292,6 +307,8 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
     fun returnJob(
         jobSheetId: String,
         settlementMethod: String,
+        remark: String = "",
+        context: Context? = null,
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -301,7 +318,9 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = repository.markReturned(
                     jobSheetId = jobSheetId,
                     settlementMethod = settlementMethod,
-                    currentUser = user
+                    currentUser = user,
+                    remark = remark,
+                    context = context
                 )
                 if (updated != null) {
                     onSuccess(updated)
@@ -310,6 +329,31 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to return job")
+            }
+        }
+    }
+
+    fun addExtraPayment(
+        jobSheetId: String,
+        amount: Double,
+        paymentMode: String,
+        remark: String = "",
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch {
+            try {
+                val ok = repository.addExtraPayment(
+                    jobSheetId = jobSheetId,
+                    amount = amount,
+                    paymentMode = paymentMode,
+                    currentUser = user,
+                    remark = remark
+                )
+                if (ok) onSuccess() else onError("Failed to add payment")
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to add extra payment")
             }
         }
     }
@@ -323,31 +367,7 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val user = _currentUser.value ?: return
-        if (user.role == "worker" && newDiscount > user.maxDiscountAmount) {
-            onError("Worker discount cannot exceed ₹${user.maxDiscountAmount}.")
-            return
-        }
-        viewModelScope.launch {
-            try {
-                repository.editJobSheet(
-                    jobSheetId = jobSheetId,
-                    newQuantity = newQuantity,
-                    newRate = newRate,
-                    newDiscount = newDiscount,
-                    newNotes = newNotes,
-                    currentUser = user
-                )
-                // Trigger notification
-                _ownerAlert.value = OwnerAlertNotification(
-                    id = System.currentTimeMillis().toString(),
-                    message = "${user.name} edited job sheet $jobSheetId"
-                )
-                onSuccess()
-            } catch (e: Exception) {
-                onError(e.message ?: "Failed to edit job sheet")
-            }
-        }
+        onError("Editing job sheets is strictly prohibited. Corrections must be made only by adding payments or remarks.")
     }
 
     fun softDeleteJobSheet(
@@ -356,24 +376,7 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val user = _currentUser.value ?: return
-        viewModelScope.launch {
-            try {
-                repository.softDeleteJobSheet(
-                    jobSheetId = jobSheetId,
-                    reason = reason,
-                    currentUser = user
-                )
-                // Trigger notification immediately for Owner
-                _ownerAlert.value = OwnerAlertNotification(
-                    id = System.currentTimeMillis().toString(),
-                    message = "${user.name} soft-deleted job sheet $jobSheetId: $reason"
-                )
-                onSuccess()
-            } catch (e: Exception) {
-                onError(e.message ?: "Failed to delete job sheet")
-            }
-        }
+        onError("Deleting job sheets is strictly prohibited by client business policy.")
     }
 
     // --- Machine Management (Owner Only) ---
@@ -504,5 +507,54 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
             shareIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(shareIntent)
         }
+    }
+
+    // --- PDF Export (Owner Only) ---
+    fun exportReportPdf(context: Context) {
+        if (_currentUser.value?.role != "owner") return
+        val list = allJobSheets.value
+        val payList = payments.value
+        val name = _currentUser.value?.name ?: "Owner"
+        com.example.util.PdfGenerator.shareReportPdf(context, list, payList, name)
+    }
+
+    fun viewReportPdf(context: Context) {
+        if (_currentUser.value?.role != "owner") return
+        val list = allJobSheets.value
+        val payList = payments.value
+        val name = _currentUser.value?.name ?: "Owner"
+        com.example.util.PdfGenerator.viewReportPdf(context, list, payList, name)
+    }
+
+    // --- Daily Cash Management (Opening & Closing Cash) ---
+    val dailyCashList: StateFlow<List<com.example.data.model.DailyCashEntity>> = repository.getAllDailyCashFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun saveOpeningCash(dateStr: String, openingAmount: Double, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch {
+            try {
+                repository.saveOpeningCash(dateStr, openingAmount, user)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save opening cash")
+            }
+        }
+    }
+
+    fun saveClosingCash(dateStr: String, closingAmount: Double, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch {
+            try {
+                repository.saveClosingCash(dateStr, closingAmount, user)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save closing cash")
+            }
+        }
+    }
+
+    suspend fun getOpeningCashForDate(dateStr: String): Double {
+        return repository.getOpeningCashForDate(dateStr)
     }
 }

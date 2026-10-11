@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.app.Activity
+import android.content.Context
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -29,8 +33,21 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.example.R
 import com.example.data.model.UserEntity
 import com.example.ui.theme.*
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+import com.google.firebase.Firebase
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 @Composable
 fun AuthScreen(
@@ -71,6 +88,12 @@ fun AuthScreen(
     var pin by remember { mutableStateOf("") }
     var pinVisible by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var failedAttempts by remember { mutableIntStateOf(0) }
+    var lockoutUntil by remember { mutableLongStateOf(0L) }
+    var isGoogleSigningIn by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -314,9 +337,21 @@ fun AuthScreen(
                                 errorMessage = "Please select an operator"
                                 return@Button
                             }
+                            if (System.currentTimeMillis() < lockoutUntil) {
+                                val remainingSec = ((lockoutUntil - System.currentTimeMillis()) / 1000).coerceAtLeast(1)
+                                errorMessage = "Lockout active due to repeated failures. Please wait ${remainingSec}s."
+                                return@Button
+                            }
                             if (user.pin.isNotEmpty() && pin != user.pin) {
-                                errorMessage = "Incorrect PIN. Default is ${if (user.role == "owner") "1234" else "0000"}"
+                                failedAttempts++
+                                if (failedAttempts >= 5) {
+                                    lockoutUntil = System.currentTimeMillis() + 60_000L
+                                    errorMessage = "5 failed attempts. Account locked out for 60 seconds."
+                                } else {
+                                    errorMessage = "Incorrect PIN (${5 - failedAttempts} attempts remaining). Default is ${if (user.role == "owner") "1234" else "0000"}"
+                                }
                             } else {
+                                failedAttempts = 0
                                 onLoginSuccess(user)
                             }
                         },
@@ -333,6 +368,103 @@ fun AuthScreen(
                             fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        HorizontalDivider(modifier = Modifier.weight(1f), color = BabaBorder)
+                        Text(
+                            text = " OR CLOUD SYNC ",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BabaGray,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        HorizontalDivider(modifier = Modifier.weight(1f), color = BabaBorder)
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Interactive Google Sign-In via Credential Manager
+                    OutlinedButton(
+                        onClick = {
+                            val user = selectedUser ?: return@OutlinedButton
+                            isGoogleSigningIn = true
+                            errorMessage = null
+                            val clientId = try {
+                                context.getString(R.string.default_web_client_id)
+                            } catch (e: Exception) {
+                                isGoogleSigningIn = false
+                                errorMessage = "Google Sign-In configuration missing"
+                                return@OutlinedButton
+                            }
+
+                            val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+                            val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+                            val credentialManager = CredentialManager.create(context)
+
+                            coroutineScope.launch {
+                                try {
+                                    val result = credentialManager.getCredential(context as Activity, request)
+                                    val credential = result.credential
+                                    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                        val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                                        val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+                                        val authResult = Firebase.auth.signInWithCredential(authCredential).await()
+                                        val firebaseUser = authResult.user
+                                        if (firebaseUser != null) {
+                                            val authenticatedUser = user.copy(id = firebaseUser.uid)
+                                            isGoogleSigningIn = false
+                                            onLoginSuccess(authenticatedUser)
+                                        } else {
+                                            isGoogleSigningIn = false
+                                            errorMessage = "Firebase user session empty"
+                                        }
+                                    } else {
+                                        isGoogleSigningIn = false
+                                        errorMessage = "Unexpected credential returned"
+                                    }
+                                } catch (e: GetCredentialCancellationException) {
+                                    Log.w("Auth", "Google Sign-In cancelled: ${e.message}", e)
+                                    isGoogleSigningIn = false
+                                } catch (e: Exception) {
+                                    Log.e("Auth", "Google Sign-In failed", e)
+                                    isGoogleSigningIn = false
+                                    errorMessage = e.localizedMessage ?: "Google Sign-In failed"
+                                }
+                            }
+                        },
+                        enabled = !isGoogleSigningIn,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("google_signin_button"),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder)
+                    ) {
+                        if (isGoogleSigningIn) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = BabaRed, strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Connecting to Firebase...", fontSize = 13.sp, color = BabaDark)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.SupervisorAccount,
+                                contentDescription = null,
+                                tint = BabaRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Sign in with Google (${selectedUser?.name ?: "Staff"})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaDark
+                            )
+                        }
                     }
                 }
             }

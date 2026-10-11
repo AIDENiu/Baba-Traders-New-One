@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -24,6 +25,7 @@ import com.example.data.model.UserEntity
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.components.*
 import com.example.ui.theme.*
+import com.example.util.PdfGenerator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,13 +36,13 @@ fun ActiveJobsScreen(
     currentUser: UserEntity,
     allJobSheets: List<JobSheetEntity>,
     onReturnJob: (JobSheetEntity) -> Unit,
-    onEditJob: (JobSheetEntity) -> Unit,
-    onDeleteJob: (JobSheetEntity) -> Unit,
+    onAddPayment: (JobSheetEntity) -> Unit,
+    onViewPaymentHistory: (JobSheetEntity) -> Unit,
     onViewReceipt: (JobSheetEntity) -> Unit,
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
-    var selectedTab by remember { mutableStateOf(0) } // 0: Active, 1: Overdue, 2: Returned/Completed
+    var selectedTab by remember { mutableStateOf(0) } // 0: Active, 1: Overdue, 2: Returned/Closed
     var searchQuery by remember { mutableStateOf("") }
     val now = remember { System.currentTimeMillis() }
     val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
@@ -51,7 +53,7 @@ fun ActiveJobsScreen(
         val tabFiltered = when (selectedTab) {
             0 -> nonDeleted.filter { it.status == "active" || it.status == "overdue" }
             1 -> nonDeleted.filter { it.status == "overdue" || (it.status == "active" && it.dueTime < now) }
-            2 -> nonDeleted.filter { it.status == "returned" }
+            2 -> nonDeleted.filter { it.status == "returned" || it.status == "closed" }
             else -> nonDeleted
         }
 
@@ -194,8 +196,8 @@ fun ActiveJobsScreen(
                             isOverdue = isOverdue,
                             dateFormat = dateFormat,
                             onReturn = { onReturnJob(job) },
-                            onEdit = { onEditJob(job) },
-                            onDelete = { onDeleteJob(job) },
+                            onAddPayment = { onAddPayment(job) },
+                            onViewPaymentHistory = { onViewPaymentHistory(job) },
                             onViewReceipt = { onViewReceipt(job) }
                         )
                     }
@@ -211,10 +213,11 @@ fun OrderCard(
     isOverdue: Boolean,
     dateFormat: SimpleDateFormat,
     onReturn: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onAddPayment: () -> Unit,
+    onViewPaymentHistory: () -> Unit,
     onViewReceipt: () -> Unit
 ) {
+    val context = LocalContext.current
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -282,6 +285,39 @@ fun OrderCard(
                 modifier = Modifier.padding(vertical = 2.dp)
             )
 
+            // Attribution Tag
+            val attributionText = if (jobSheet.status == "returned" && jobSheet.returnedByName.isNotEmpty()) {
+                "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}, returned to ${jobSheet.returnedByName}"
+            } else {
+                "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}"
+            }
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = BabaLightGray,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VerifiedUser,
+                        contentDescription = null,
+                        tint = BabaRed,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = attributionText,
+                        fontSize = 11.sp,
+                        color = BabaDark,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -329,31 +365,49 @@ fun OrderCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (jobSheet.status != "returned") {
+                val isOpen = jobSheet.status != "returned" && jobSheet.status != "closed"
+                if (isOpen) {
                     Button(
                         onClick = onReturn,
                         colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1.3f).testTag("order_return_${jobSheet.id}")
+                        modifier = Modifier.testTag("order_return_${jobSheet.id}")
                     ) {
                         Icon(Icons.Default.Check, contentDescription = "Return", modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Mark Returned", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Return", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = onAddPayment,
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("order_add_payment_${jobSheet.id}")
+                    ) {
+                        Icon(Icons.Default.Payments, contentDescription = "Add Payment", modifier = Modifier.size(16.dp), tint = BabaYellow)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("+ Payment", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
-                IconButton(onClick = onViewReceipt, modifier = Modifier.size(36.dp)) {
+                IconButton(
+                    onClick = onViewPaymentHistory,
+                    modifier = Modifier.size(36.dp).testTag("order_history_${jobSheet.id}")
+                ) {
+                    Icon(Icons.Default.History, contentDescription = "Payment History", tint = BabaDark, modifier = Modifier.size(20.dp))
+                }
+
+                IconButton(
+                    onClick = {
+                        PdfGenerator.viewJobSheetPdf(context, jobSheet)
+                    },
+                    modifier = Modifier.size(36.dp).testTag("order_pdf_${jobSheet.id}")
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF Invoice", tint = BabaRed, modifier = Modifier.size(18.dp))
+                }
+
+                IconButton(onClick = onViewReceipt, modifier = Modifier.size(36.dp).testTag("order_receipt_${jobSheet.id}")) {
                     Icon(Icons.Default.Receipt, contentDescription = "Receipt", tint = BabaDark, modifier = Modifier.size(18.dp))
-                }
-
-                if (jobSheet.status != "returned") {
-                    IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BabaDark, modifier = Modifier.size(18.dp))
-                    }
-
-                    IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = BabaOverdue, modifier = Modifier.size(18.dp))
-                    }
                 }
             }
         }

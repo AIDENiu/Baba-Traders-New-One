@@ -24,10 +24,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.example.data.model.JobSheetEntity
+import com.example.data.model.PaymentEntity
 import com.example.data.model.UserEntity
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.theme.*
+import com.example.util.PdfGenerator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -174,19 +180,24 @@ fun ReceiptDialog(
                     if (jobSheet.returnTime != null) {
                         ReceiptRow("Returned At", dateFormat.format(Date(jobSheet.returnTime)))
                     }
-                    ReceiptRow("Checkout By (Billing)", jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName })
-                    ReceiptRow("Handled By (Equipment)", jobSheet.handledByName)
-                    ReceiptRow("Security Deposit Paid", "₹${jobSheet.depositAmount}", textColor = BabaSuccess)
-
-                    if (jobSheet.discount > 0) {
-                        ReceiptRow("Discount Applied", "- ₹${jobSheet.discount}", textColor = BabaRed)
-                    }
+                    ReceiptRow("Payment Mode", jobSheet.paymentMode.uppercase(), isBold = true)
+                    ReceiptRow("Discount Price", "₹${jobSheet.discount}", textColor = if (jobSheet.discount > 0) BabaRed else BabaDark)
+                    ReceiptRow("Created By (User ID)", "${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }} (ID: ${jobSheet.checkoutBy.ifEmpty { jobSheet.handledBy }})")
+                    ReceiptRow(
+                        "Closed By (User ID)",
+                        if (jobSheet.closedBy.isNotEmpty() || jobSheet.returnedBy.isNotEmpty()) {
+                            "${jobSheet.closedByName.ifEmpty { jobSheet.returnedByName }} (ID: ${jobSheet.closedBy.ifEmpty { jobSheet.returnedBy }})"
+                        } else {
+                            "Open (Pending Return)"
+                        }
+                    )
+                    ReceiptRow("Security Deposit / Advance", "₹${jobSheet.depositAmount}", textColor = BabaSuccess)
 
                     if (jobSheet.lateFee > 0) {
                         ReceiptRow("Late Fee Charged", "+ ₹${jobSheet.lateFee}", textColor = BabaOverdue, isBold = true)
                     }
 
-                    if (jobSheet.status == "returned") {
+                    if (jobSheet.status == "returned" || jobSheet.status == "closed") {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = BabaBorder)
                         ReceiptRow("Total Rental Fee", "₹${jobSheet.totalRentalFee}", isBold = true)
                         if (jobSheet.finalSettlement > 0) {
@@ -195,6 +206,9 @@ fun ReceiptDialog(
                             ReceiptRow("Refund Returned", "₹${abs(jobSheet.finalSettlement)}", textColor = BabaSuccess, isBold = true)
                         } else {
                             ReceiptRow("Settlement", "Fully Settled", textColor = BabaSuccess, isBold = true)
+                        }
+                        if (jobSheet.returnRemark.isNotEmpty()) {
+                            ReceiptRow("Return Remark", jobSheet.returnRemark)
                         }
                     }
                 }
@@ -212,31 +226,72 @@ fun ReceiptDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Action Buttons
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
+                    // Primary PDF Action Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Close")
+                        Button(
+                            onClick = {
+                                PdfGenerator.viewJobSheetPdf(context, jobSheet)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("view_pdf_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("View PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                PdfGenerator.shareJobSheetPdf(context, jobSheet)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("share_pdf_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    Button(
-                        onClick = {
-                            shareReceiptText(context, jobSheet)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("share_receipt_button"),
-                        shape = RoundedCornerShape(8.dp)
+                    // Secondary Text Share & Close
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Share Receipt")
+                        OutlinedButton(
+                            onClick = {
+                                shareReceiptText(context, jobSheet)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("share_receipt_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.TextSnippet, contentDescription = "Text", modifier = Modifier.size(14.dp), tint = BabaDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Share Text", fontSize = 11.sp, color = BabaDark)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Close", fontSize = 11.sp)
+                        }
                     }
                 }
             }
@@ -302,10 +357,12 @@ private fun shareReceiptText(context: Context, jobSheet: JobSheetEntity) {
 fun ReturnJobDialog(
     jobSheet: JobSheetEntity,
     calculation: ReturnCalculation,
-    onConfirmReturn: (paymentMethod: String) -> Unit,
+    onConfirmReturn: (paymentMethod: String, remark: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedMethod by remember { mutableStateOf("cash") }
+    var remarkText by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -449,10 +506,10 @@ fun ReturnJobDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf("cash" to "Cash", "upi" to "UPI / GPay", "card" to "Card").forEach { (key, label) ->
+                    listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (key, label) ->
                         FilterChip(
                             selected = selectedMethod == key,
                             onClick = { selectedMethod = key },
@@ -462,139 +519,32 @@ fun ReturnJobDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Cancel")
-                    }
-
-                    Button(
-                        onClick = { onConfirmReturn(selectedMethod) },
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
-                        modifier = Modifier
-                            .weight(1.3f)
-                            .testTag("confirm_return_button"),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Confirm Return", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// --- Edit Job Dialog ---
-@Composable
-fun EditJobDialog(
-    jobSheet: JobSheetEntity,
-    currentUser: UserEntity,
-    onConfirmEdit: (newQty: Int, newRate: Double, newDiscount: Double, newNotes: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var quantityText by remember { mutableStateOf(jobSheet.quantity.toString()) }
-    var rateText by remember { mutableStateOf(jobSheet.rateUsed.toString()) }
-    var discountText by remember { mutableStateOf(jobSheet.discount.toString()) }
-    var notesText by remember { mutableStateOf(jobSheet.notes) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Text(
-                    text = "Edit Job Sheet ${jobSheet.id}",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = BabaDark
-                )
-                Text(
-                    text = "Modifications will be logged to the Activity Log and the Owner will be notified.",
-                    fontSize = 11.sp,
-                    color = BabaRedDark,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BabaBorder)
-
+                // Remark Field (Mandatory / Required for audit)
                 OutlinedTextField(
-                    value = quantityText,
-                    onValueChange = { quantityText = it },
-                    label = { Text("Quantity") },
-                    colors = babaTextFieldColors(),
-                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
-                )
-
-                OutlinedTextField(
-                    value = rateText,
-                    onValueChange = { rateText = it },
-                    label = { Text("Daily Rate (₹)") },
-                    colors = babaTextFieldColors(),
-                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
-                )
-
-                OutlinedTextField(
-                    value = discountText,
-                    onValueChange = { discountText = it },
-                    label = { Text("Discount (₹)") },
-                    colors = babaTextFieldColors(),
-                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
-                    supportingText = {
-                        if (currentUser.role == "worker") {
-                            Text("Worker discount cap: ₹${currentUser.maxDiscountAmount}", color = BabaGray, fontSize = 10.sp)
-                        }
+                    value = remarkText,
+                    onValueChange = {
+                        remarkText = it
+                        errorMessage = null
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
-                )
-
-                OutlinedTextField(
-                    value = notesText,
-                    onValueChange = { notesText = it },
-                    label = { Text("Notes / Reason for update") },
+                    label = { Text("Return Remark *") },
+                    placeholder = { Text("e.g. Machinery tested & returned in good condition") },
+                    supportingText = {
+                        Text(
+                            text = if (calculation.balanceDueOrRefund == 0.0) "No payment collected: Will be recorded as NIL with this remark in the Sales Report" else "Remark will be recorded in Sales Report & audit ledger",
+                            fontSize = 10.sp,
+                            color = BabaGray
+                        )
+                    },
                     colors = babaTextFieldColors(),
                     textStyle = babaInputTextStyle(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("return_remark_input"),
                     shape = RoundedCornerShape(8.dp)
                 )
 
                 if (errorMessage != null) {
-                    Text(
-                        text = errorMessage!!,
-                        color = BabaOverdue,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
+                    Text(errorMessage!!, color = BabaOverdue, fontSize = 12.sp)
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -613,24 +563,20 @@ fun EditJobDialog(
 
                     Button(
                         onClick = {
-                            val qty = quantityText.toIntOrNull() ?: 1
-                            val rate = rateText.toDoubleOrNull() ?: jobSheet.rateUsed
-                            val discount = discountText.toDoubleOrNull() ?: 0.0
-
-                            if (currentUser.role == "worker" && discount > currentUser.maxDiscountAmount) {
-                                errorMessage = "Worker discount cannot exceed ₹${currentUser.maxDiscountAmount}."
+                            val r = remarkText.trim()
+                            if (r.isEmpty()) {
+                                errorMessage = "Please enter a return remark (e.g. machine status / condition)"
                                 return@Button
                             }
-
-                            onConfirmEdit(qty, rate, discount, notesText)
+                            onConfirmReturn(selectedMethod, r)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("save_edit_job_button"),
+                            .weight(1.3f)
+                            .testTag("confirm_return_button"),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Save Changes")
+                        Text("Confirm Return", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -638,16 +584,18 @@ fun EditJobDialog(
     }
 }
 
-// --- Soft Delete Dialog ---
+// --- Add Extra Payment Dialog ---
 @Composable
-fun SoftDeleteDialog(
+fun AddExtraPaymentDialog(
     jobSheet: JobSheetEntity,
     currentUser: UserEntity,
-    onConfirmDelete: (reason: String) -> Unit,
+    onConfirmPayment: (amount: Double, paymentMode: String, remark: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var reason by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    var amountText by remember { mutableStateOf("") }
+    var selectedMethod by remember { mutableStateOf("cash") }
+    var remarkText by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -661,60 +609,91 @@ fun SoftDeleteDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DeleteForever,
-                        contentDescription = "Delete",
-                        tint = BabaOverdue,
+                        imageVector = Icons.Default.Payments,
+                        contentDescription = "Add Payment",
+                        tint = BabaSuccess,
                         modifier = Modifier.size(28.dp)
                     )
-                    Text(
-                        text = "Soft-Delete Job Sheet",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = BabaDark
-                    )
+                    Column {
+                        Text(
+                            text = "Add Extra Payment",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = BabaDark
+                        )
+                        Text(
+                            text = "${jobSheet.id} • ${jobSheet.customerName}",
+                            fontSize = 12.sp,
+                            color = BabaGray
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Are you sure you want to delete ${jobSheet.id} (${jobSheet.customerName}, ${jobSheet.machineName})?",
-                    fontSize = 13.sp,
-                    color = BabaDark
-                )
+                HorizontalDivider(color = BabaBorder)
 
-                Text(
-                    text = "Per shop policy, this soft-delete will restore stock, be permanently recorded in the Activity Log, and alert Owner immediately.",
-                    fontSize = 11.sp,
-                    color = BabaOverdue,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = BabaLightGray,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Machine: ${jobSheet.machineName} (Qty: ${jobSheet.quantity})", fontSize = 12.sp, color = BabaDark)
+                        Text("Current Advance / Deposit: ₹${jobSheet.depositAmount}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaSuccess)
+                        Text("Received By: ${currentUser.name} (User ID: ${currentUser.id})", fontSize = 11.sp, color = BabaDark, fontWeight = FontWeight.SemiBold)
+                    }
+                }
 
                 OutlinedTextField(
-                    value = reason,
+                    value = amountText,
                     onValueChange = {
-                        reason = it
-                        error = null
+                        amountText = it
+                        errorMessage = null
                     },
-                    label = { Text("Reason for Deletion (Required)") },
-                    placeholder = { Text("e.g. Customer cancelled before collection") },
+                    label = { Text("Payment Amount (₹) *") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = babaTextFieldColors(),
-                    textStyle = babaInputTextStyle(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
+                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.fillMaxWidth().testTag("extra_payment_amount_input"),
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                if (error != null) {
-                    Text(text = error!!, color = BabaOverdue, fontSize = 11.sp)
+                Text("Mode of Payment *", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (key, label) ->
+                        FilterChip(
+                            selected = selectedMethod == key,
+                            onClick = { selectedMethod = key },
+                            label = { Text(label, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = remarkText,
+                    onValueChange = { remarkText = it },
+                    label = { Text("Payment Remark") },
+                    placeholder = { Text("e.g. Mid-rental installment") },
+                    colors = babaTextFieldColors(),
+                    textStyle = babaInputTextStyle(),
+                    modifier = Modifier.fillMaxWidth().testTag("extra_payment_remark_input"),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                if (errorMessage != null) {
+                    Text(errorMessage!!, color = BabaOverdue, fontSize = 12.sp)
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -730,20 +709,143 @@ fun SoftDeleteDialog(
 
                     Button(
                         onClick = {
-                            if (reason.trim().isEmpty()) {
-                                error = "Please provide a reason"
-                            } else {
-                                onConfirmDelete(reason.trim())
+                            val amt = amountText.toDoubleOrNull()
+                            if (amt == null || amt <= 0) {
+                                errorMessage = "Please enter a valid amount greater than 0"
+                                return@Button
                             }
+                            onConfirmPayment(amt, selectedMethod, remarkText.trim())
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaOverdue),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("confirm_delete_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
+                        modifier = Modifier.weight(1.3f).testTag("confirm_extra_payment_button"),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Delete Job")
+                        Text("Save Payment", fontWeight = FontWeight.Bold)
                     }
+                }
+            }
+        }
+    }
+}
+
+// --- Payment History Dialog ---
+@Composable
+fun PaymentHistoryDialog(
+    jobSheet: JobSheetEntity,
+    payments: List<PaymentEntity>,
+    onDismiss: () -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+    val totalPaid = remember(payments) {
+        payments.filter { it.type != "refund" }.sumOf { it.amount } - payments.filter { it.type == "refund" }.sumOf { it.amount }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Payment History", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = BabaDark)
+                        Text("${jobSheet.id} • ${jobSheet.customerName}", fontSize = 12.sp, color = BabaGray)
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = BabaDark)
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BabaBorder)
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = BabaSuccessLight,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Total Collected So Far", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BabaDark)
+                        Text("₹${totalPaid.toInt()}", fontWeight = FontWeight.Black, fontSize = 16.sp, color = BabaSuccess)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (payments.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text("No payment entries found", color = BabaGray, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f, fill = false).heightIn(max = 350.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(payments) { payment ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = BabaLightGray,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            text = when (payment.type) {
+                                                "advance" -> "Advance Payment"
+                                                "extra" -> "Additional Payment"
+                                                "settlement" -> "Return Settlement"
+                                                "refund" -> "Deposit Refund"
+                                                "return_nil" -> "Return (NIL Payment)"
+                                                else -> payment.type.uppercase()
+                                            },
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = if (payment.type == "refund") BabaRedDark else BabaDark
+                                        )
+                                        Text(
+                                            text = if (payment.type == "return_nil") "NIL" else if (payment.type == "refund") "- ₹${payment.amount}" else "₹${payment.amount}",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 13.sp,
+                                            color = if (payment.type == "refund") BabaOverdue else BabaSuccess
+                                        )
+                                    }
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Mode: ${payment.method.uppercase()}", fontSize = 11.sp, color = BabaDark, fontWeight = FontWeight.SemiBold)
+                                        Text(dateFormat.format(Date(payment.timestamp)), fontSize = 10.sp, color = BabaGray)
+                                    }
+                                    Text("Received By: ${payment.handledByName} (User ID: ${payment.handledBy})", fontSize = 10.sp, color = BabaGray)
+                                    if (payment.remark.isNotEmpty()) {
+                                        Text("Remark: ${payment.remark}", fontSize = 11.sp, color = BabaDark)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Close")
                 }
             }
         }

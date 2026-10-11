@@ -53,21 +53,33 @@ service cloud.firestore {
       );
     }
 
-    // 5. Job sheets collection: Worker discount capped at 200; no hard-deletes by workers
+    // 5. Job sheets collection: Immutable records. Delete is FORBIDDEN for everyone (including Owner)
     match /job_sheets/{jobSheetId} {
       allow read: if isAuthenticated();
       allow create: if isStaff() && (
-        isOwner() || (request.resource.data.discount <= 200 && request.resource.data.isDeleted == false)
+        isOwner() || (request.resource.data.discount <= 200)
       );
-      allow update: if isStaff() && (
-        isOwner() || (request.resource.data.discount <= 200 && (!resource.data.isDeleted || request.resource.data.isDeleted))
-      );
-      allow delete: if isOwner();
+      // Only allow transition to closed or adding remarks/settlements; cannot alter original rental terms
+      allow update: if isStaff() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['id', 'customerId', 'customerName', 'customerPhone', 'machineId', 'rateUsed', 'checkoutTime', 'isDeleted']);
+      allow delete: if false; // STRICTLY FORBIDDEN FOR ALL USERS
     }
 
-    // 6. Activity log: Write-only-once. Deny update and delete entirely
-    match /activity_log/{logId} {
+    // 6. Payments collection: Immutable financial ledger
+    match /payments/{paymentId} {
       allow read: if isAuthenticated();
+      allow create: if isStaff();
+      allow update, delete: if false; // Financial records cannot be altered or deleted
+    }
+
+    // 7. Daily Cash collection: Owner can read all, staff can record daily balance
+    match /daily_cash/{dateId} {
+      allow read: if isOwner();
+      allow write: if isStaff();
+    }
+
+    // 8. Activity log: Write-only-once. Deny update and delete entirely
+    match /activity_log/{logId} {
+      allow read: if isOwner();
       allow create: if isStaff();
       allow update, delete: if false;
     }

@@ -23,6 +23,7 @@ import com.example.data.model.JobSheetEntity
 import com.example.data.model.PaymentEntity
 import com.example.data.model.UserEntity
 import com.example.ui.theme.*
+import com.example.util.PdfGenerator
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -35,6 +36,7 @@ fun ReportsScreen(
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
+    val context = LocalContext.current
     val now = remember { System.currentTimeMillis() }
 
     val startOfMonth = remember {
@@ -75,8 +77,16 @@ fun ReportsScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            PdfGenerator.viewReportPdf(context, allJobSheets, payments, currentUser.name)
+                        },
+                        modifier = Modifier.testTag("export_pdf_button")
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF Report", tint = BabaYellow)
+                    }
                     IconButton(onClick = onExportCsv, modifier = Modifier.testTag("export_csv_button")) {
-                        Icon(Icons.Default.Download, contentDescription = "Export CSV", tint = BabaYellow)
+                        Icon(Icons.Default.TableChart, contentDescription = "Export CSV", tint = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BabaRed)
@@ -91,6 +101,78 @@ fun ReportsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // PDF Executive Report Card Action
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .background(BabaOverdueLight, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", tint = BabaRed)
+                                }
+                                Column {
+                                    Text("Executive PDF Report", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BabaDark)
+                                    Text("Formal financial statement & audit ledger", fontSize = 11.sp, color = BabaGray)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    PdfGenerator.viewReportPdf(context, allJobSheets, payments, currentUser.name)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("view_report_pdf_button"),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = "View", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("View PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    PdfGenerator.shareReportPdf(context, allJobSheets, payments, currentUser.name)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("share_report_pdf_button"),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Share PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
             // CSV Export Banner Action
             item {
                 Card(
