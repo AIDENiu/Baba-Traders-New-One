@@ -44,7 +44,7 @@ fun WorkerHomeScreen(
     val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
 
     val filteredJobs = remember(activeJobs, searchQuery) {
-        val nonDeleted = activeJobs.filter { !it.isDeleted && it.status != "returned" }
+        val nonDeleted = activeJobs.filter { !it.isDeleted && (it.status == "active" || it.status == "overdue") }
         if (searchQuery.trim().isEmpty()) {
             nonDeleted
         } else {
@@ -252,6 +252,27 @@ fun WorkerHomeScreen(
                             onViewReceipt = { onViewReceiptClick(job) }
                         )
                     }
+
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "BABA Traders • Job Sheet & Machinery",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BabaDark
+                            )
+                            Text(
+                                text = "App Version ${com.example.BuildConfig.VERSION_NAME} (Build ${com.example.BuildConfig.VERSION_CODE})",
+                                fontSize = 10.5.sp,
+                                color = BabaGray
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -318,8 +339,13 @@ fun WorkerJobCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             // Machine Name & Qty
+            val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
+                "${jobSheet.remainingActiveQty}x ${jobSheet.machineName} (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+            } else {
+                "${jobSheet.quantity}x ${jobSheet.machineName}"
+            }
             Text(
-                text = "${jobSheet.quantity}x ${jobSheet.machineName}",
+                text = quantityDisplay,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = BabaDark
@@ -389,13 +415,13 @@ fun WorkerJobCard(
                 // Add Extra Payment Button
                 Button(
                     onClick = onAddPayment,
-                    colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                    colors = ButtonDefaults.buttonColors(containerColor = BabaDark, contentColor = Color.White),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1.3f).testTag("add_payment_job_${jobSheet.id}")
                 ) {
                     Icon(Icons.Default.Payments, contentDescription = "Add Payment", tint = BabaYellow, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("+ Pay", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("+ Pay", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
 
                 // History Icon Button

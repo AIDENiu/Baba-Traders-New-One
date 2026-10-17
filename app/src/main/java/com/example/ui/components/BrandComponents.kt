@@ -75,13 +75,30 @@ fun BabaBrandTopBar(
                 }
 
                 Column {
-                    Text(
-                        text = "BABA TRADERS",
-                        color = Color.White,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 17.sp,
-                        letterSpacing = 0.5.sp
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "BABA TRADERS",
+                            color = Color.White,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 17.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = BabaYellow.copy(alpha = 0.25f)
+                        ) {
+                            Text(
+                                text = "v${com.example.BuildConfig.VERSION_NAME}",
+                                color = BabaYellow,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
                     Text(
                         text = "TOOLS FOR A STRONGER TOMORROW",
                         color = BabaYellow,

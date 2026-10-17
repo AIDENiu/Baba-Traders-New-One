@@ -146,7 +146,7 @@ fun ActiveJobsScreen(
                     onClick = { selectedTab = 2 },
                     text = {
                         Text(
-                            text = "Returned (${nonDeleted.count { it.status == "returned" }})",
+                            text = "Returned (${nonDeleted.count { it.status == "returned" || it.status == "closed" }})",
                             fontSize = 12.sp,
                             fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal
                         )
@@ -249,19 +249,19 @@ fun OrderCard(
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = when (jobSheet.status) {
-                        "returned" -> BabaSuccessLight
+                        "returned", "closed" -> BabaSuccessLight
                         else -> if (isOverdue) BabaOverdueLight else BabaYellowLight
                     }
                 ) {
                     Text(
                         text = when (jobSheet.status) {
-                            "returned" -> "RETURNED"
+                            "returned", "closed" -> "RETURNED"
                             else -> if (isOverdue) "OVERDUE" else "ACTIVE"
                         },
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         color = when (jobSheet.status) {
-                            "returned" -> BabaSuccess
+                            "returned", "closed" -> BabaSuccess
                             else -> if (isOverdue) BabaOverdue else BabaYellowDark
                         },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -271,8 +271,14 @@ fun OrderCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
+                "${jobSheet.remainingActiveQty}x ${jobSheet.machineName} (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+            } else {
+                "${jobSheet.quantity}x ${jobSheet.machineName}"
+            }
+
             Text(
-                text = "${jobSheet.quantity}x ${jobSheet.machineName}",
+                text = quantityDisplay,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = BabaDark
@@ -286,7 +292,8 @@ fun OrderCard(
             )
 
             // Attribution Tag
-            val attributionText = if (jobSheet.status == "returned" && jobSheet.returnedByName.isNotEmpty()) {
+            val isJobClosed = jobSheet.status == "returned" || jobSheet.status == "closed"
+            val attributionText = if (isJobClosed && jobSheet.returnedByName.isNotEmpty()) {
                 "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}, returned to ${jobSheet.returnedByName}"
             } else {
                 "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}"
@@ -326,17 +333,17 @@ fun OrderCard(
                     text = "Due: ${dateFormat.format(Date(jobSheet.dueTime))}",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isOverdue && jobSheet.status != "returned") BabaOverdue else BabaGray
+                    color = if (isOverdue && !isJobClosed) BabaOverdue else BabaGray
                 )
                 Text(
-                    text = "Deposit: ₹${jobSheet.depositAmount}",
+                    text = if (isJobClosed) "Deposit Settled" else "Deposit: ₹${jobSheet.depositAmount}",
                     fontSize = 11.sp,
                     color = BabaSuccess,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            if (jobSheet.status == "returned") {
+            if (isJobClosed) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = BabaBorder)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -349,10 +356,10 @@ fun OrderCard(
                         color = BabaDark
                     )
                     Text(
-                        text = if (jobSheet.finalSettlement > 0) "Dues: ₹${jobSheet.finalSettlement}" else "Fully Settled",
+                        text = "Account Fully Settled",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (jobSheet.finalSettlement > 0) BabaOverdue else BabaSuccess
+                        color = BabaSuccess
                     )
                 }
             }
@@ -380,13 +387,13 @@ fun OrderCard(
 
                     Button(
                         onClick = onAddPayment,
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaDark, contentColor = Color.White),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.testTag("order_add_payment_${jobSheet.id}")
                     ) {
                         Icon(Icons.Default.Payments, contentDescription = "Add Payment", modifier = Modifier.size(16.dp), tint = BabaYellow)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("+ Payment", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("+ Payment", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
 

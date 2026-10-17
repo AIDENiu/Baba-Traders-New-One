@@ -26,6 +26,9 @@ import androidx.compose.ui.window.Dialog
 import com.example.data.model.UserEntity
 import com.example.ui.theme.*
 
+import com.example.ui.components.OwnerPinChangeWithOtpDialog
+import com.example.ui.components.UpdateOwnerMobileDialog
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageStaffScreen(
@@ -34,11 +37,15 @@ fun ManageStaffScreen(
     onAddWorker: (name: String, phoneOrUsername: String, pin: String, maxDiscount: Double) -> Unit,
     onToggleWorkerStatus: (UserEntity) -> Unit,
     onUpdateDiscountFloor: (UserEntity, Double) -> Unit,
+    onUpdateOwnerPhone: (owner: UserEntity, newPhone: String) -> Unit = { _, _ -> },
+    onUpdateOwnerPin: (owner: UserEntity, newPin: String) -> Unit = { _, _ -> },
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
     var showAddWorkerDialog by remember { mutableStateOf(false) }
     var workerToEditDiscount by remember { mutableStateOf<UserEntity?>(null) }
+    var ownerToEditMobile by remember { mutableStateOf<UserEntity?>(null) }
+    var ownerToChangePin by remember { mutableStateOf<UserEntity?>(null) }
 
     Scaffold(
         topBar = {
@@ -81,6 +88,35 @@ fun ManageStaffScreen(
                             "Workers can only access Quick Job Sheet and Active Orders. They cannot see revenue, edit machine pricing, or manage staff.",
                             fontSize = 11.sp,
                             color = BabaGray
+                        )
+                    }
+                }
+            }
+
+            Surface(
+                color = Color.White,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Default.Info, contentDescription = "App Version", tint = BabaDark)
+                        Column {
+                            Text("BABA Job Sheet App", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
+                            Text("Machinery rental management system", fontSize = 11.sp, color = BabaGray)
+                        }
+                    }
+                    Surface(shape = RoundedCornerShape(6.dp), color = BabaYellowLight) {
+                        Text(
+                            text = "v${com.example.BuildConfig.VERSION_NAME} (Build ${com.example.BuildConfig.VERSION_CODE})",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BabaDark,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
                 }
@@ -145,6 +181,116 @@ fun ManageStaffScreen(
                                 }
                             }
 
+                            if (user.role == "owner") {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = BabaBorder)
+
+                                // Registered Mobile (Exclusively for Owner)
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = BabaYellowLight,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaYellowDark.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.PhoneAndroid,
+                                                    contentDescription = null,
+                                                    tint = BabaDark,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Column {
+                                                    Text(
+                                                        text = "Registered Security Mobile (Owner Only)",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = BabaDark
+                                                    )
+                                                    Text(
+                                                        text = "+91 ${user.registeredPhone.ifBlank { "9876543210" }}",
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = BabaDark
+                                                    )
+                                                }
+                                            }
+
+                                            OutlinedButton(
+                                                onClick = { ownerToEditMobile = user },
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = BabaDark),
+                                                modifier = Modifier.testTag("edit_owner_mobile_btn")
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Edit Mobile", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                        Text(
+                                            text = "• Kept on record only for the Owner. OTP is sent here when resetting or changing the Owner PIN.",
+                                            fontSize = 10.sp,
+                                            color = BabaDark.copy(alpha = 0.8f),
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Owner PIN Security row
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Lock,
+                                                contentDescription = null,
+                                                tint = BabaRed,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Column {
+                                                Text("Owner PIN Protection", fontSize = 11.sp, color = BabaGray)
+                                                Text("•••• (Secured)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = { ownerToChangePin = user },
+                                            colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                            modifier = Modifier.testTag("change_owner_pin_btn")
+                                        ) {
+                                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Change PIN (via OTP)", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
                             if (user.role == "worker") {
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = BabaBorder)
 
@@ -190,6 +336,31 @@ fun ManageStaffScreen(
                 }
             }
         }
+    }
+
+    // Owner Dialogs
+    if (ownerToEditMobile != null) {
+        val owner = ownerToEditMobile!!
+        UpdateOwnerMobileDialog(
+            owner = owner,
+            onDismiss = { ownerToEditMobile = null },
+            onSave = { newPhone ->
+                onUpdateOwnerPhone(owner, newPhone)
+                ownerToEditMobile = null
+            }
+        )
+    }
+
+    if (ownerToChangePin != null) {
+        val owner = ownerToChangePin!!
+        OwnerPinChangeWithOtpDialog(
+            owner = owner,
+            onDismiss = { ownerToChangePin = null },
+            onPinChanged = { newPin ->
+                onUpdateOwnerPin(owner, newPin)
+                ownerToChangePin = null
+            }
+        )
     }
 
     // Add Worker Dialog

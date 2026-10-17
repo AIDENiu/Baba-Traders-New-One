@@ -12,6 +12,7 @@ import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.SelectedMachineItem
 import com.example.data.model.UserEntity
 import kotlinx.coroutines.flow.Flow
 import java.io.File
@@ -25,17 +26,28 @@ import kotlin.math.ceil
 import kotlin.math.max
 
 data class ReturnCalculation(
-    val baseDays: Int,
-    val daysLate: Int,
+    val baseDays: Int = 1,
+    val daysLate: Int = 0,
     val baseRentalFee: Double,
-    val lateFee: Double,
+    val lateFee: Double = 0.0,
     val discount: Double,
     val depositAmount: Double,
     val netTotalFee: Double,
-    val balanceDueOrRefund: Double // > 0: customer owes balance; < 0: shop refunds customer
+    val balanceDueOrRefund: Double, // > 0: customer owes balance; < 0: shop refunds customer; == 0: balanced
+    val daysUsed: Int = baseDays + daysLate,
+    val returningQuantity: Int = 1,
+    val dailyRate: Double = 0.0
 )
 
 class BabaRepository(private val db: AppDatabase) {
+
+    companion object {
+        fun calculateDaysUsed(checkoutTime: Long, returnTime: Long = System.currentTimeMillis()): Int {
+            val totalMsPerDay = 24 * 3600 * 1000.0
+            val durationMs = maxOf(0L, returnTime - checkoutTime)
+            return ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+        }
+    }
 
     // --- Users ---
     val allUsers: Flow<List<UserEntity>> = db.userDao().getAllUsers()
@@ -55,7 +67,7 @@ class BabaRepository(private val db: AppDatabase) {
     suspend fun updateCustomer(customer: CustomerEntity) = db.customerDao().updateCustomer(customer)
 
     // --- Categories & Machines ---
-    val allCategories: Flow<List<MachineCategoryEntity>> = db.machineDao().getAllCategories()
+    val allCategories: Flow<List<MachineCategoryEntity>> = db.machineCategoryDao().getAllCategories()
     val allMachines: Flow<List<MachineEntity>> = db.machineDao().getAllMachines()
 
     fun getMachinesByCategory(categoryId: String) = db.machineDao().getMachinesByCategory(categoryId)
@@ -66,7 +78,8 @@ class BabaRepository(private val db: AppDatabase) {
     // --- Job Sheets ---
     val allJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getAllJobSheets()
     val activeJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getActiveJobSheets()
-    fun getOverdueJobSheets(now: Long) = db.jobSheetDao().getOverdueJobSheets(now)
+    val overdueJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getOverdueJobSheets()
+    fun getOverdueJobSheets(now: Long = System.currentTimeMillis()) = db.jobSheetDao().getOverdueJobSheets()
     val returnedJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getReturnedJobSheets()
     fun getJobSheetsForCustomer(customerId: String) = db.jobSheetDao().getJobSheetsForCustomer(customerId)
 
@@ -86,10 +99,7 @@ class BabaRepository(private val db: AppDatabase) {
 
     suspend fun createJobSheet(
         customer: CustomerEntity,
-        machine: MachineEntity,
-        categoryName: String,
-        quantity: Int,
-        rateUsed: Double,
+        items: List<SelectedMachineItem>,
         discount: Double,
         depositAmount: Double,
         depositMethod: String,
@@ -111,17 +121,31 @@ class BabaRepository(private val db: AppDatabase) {
         val now = System.currentTimeMillis()
         val dueTime = explicitDueTime ?: computeDueTime(now, billingCycle)
 
+        val primaryMachineId = items.firstOrNull()?.machineId ?: ""
+        val combinedMachineNames = items.joinToString(", ") { "${it.quantity}x ${it.machineName}" }
+        val uniqueCategories = items.map { it.categoryName }.distinct()
+        val combinedCategoryNames = if (uniqueCategories.size > 1) {
+            "Multi-Category (${uniqueCategories.joinToString(", ")})"
+        } else {
+            uniqueCategories.firstOrNull() ?: "Hardware"
+        }
+        val totalQty = items.sumOf { it.quantity }
+        val combinedRate = items.sumOf { it.quantity * it.rate }
+        val itemsJsonStr = SelectedMachineItem.listToJson(items)
+
         val jobSheet = JobSheetEntity(
             id = jobId,
             customerId = customer.id,
             customerName = customer.name,
             customerPhone = customer.phone,
             customerAddress = customer.address,
-            machineId = machine.id,
-            machineName = machine.name,
-            categoryName = categoryName,
-            quantity = quantity,
-            rateUsed = rateUsed,
+            machineId = primaryMachineId,
+            machineName = combinedMachineNames,
+            categoryName = combinedCategoryNames,
+            quantity = totalQty,
+            initialQuantity = totalQty,
+            returnedQuantity = 0,
+            rateUsed = combinedRate,
             discount = discount,
             depositAmount = depositAmount,
             billingCycle = billingCycle,
@@ -137,12 +161,15 @@ class BabaRepository(private val db: AppDatabase) {
             personPhotoPath = personPhotoPath,
             idPhotoPath = idPhotoPath,
             machinePhotoPath = machinePhotoPath,
-            paymentMode = depositMethod
+            paymentMode = depositMethod,
+            itemsJson = itemsJsonStr
         )
 
-        // 3. Save job sheet and decrement stock
+        // 3. Save job sheet and decrement stock for ALL selected items
         db.jobSheetDao().insertJobSheet(jobSheet)
-        db.machineDao().decrementStock(machine.id, quantity)
+        items.forEach { item ->
+            db.machineDao().decrementStock(item.machineId, item.quantity)
+        }
 
         // 4. Record advance received as the first payment entry with its mode of payment
         if (depositAmount > 0) {
@@ -170,7 +197,7 @@ class BabaRepository(private val db: AppDatabase) {
                 performedBy = checkoutUser.id,
                 performedByName = checkoutUser.name,
                 timestamp = now,
-                changeSummary = "${checkoutUser.name} billed job sheet $jobId for ${customer.name} (${machine.name}, Qty: $quantity, Rate: ₹$rateUsed, Advance: ₹$depositAmount via $depositMethod)"
+                changeSummary = "${checkoutUser.name} billed job sheet $jobId for ${customer.name}: $combinedMachineNames ($totalQty items, Rate: ₹$combinedRate, Advance: ₹$depositAmount via $depositMethod)"
             )
         )
 
@@ -182,29 +209,97 @@ class BabaRepository(private val db: AppDatabase) {
         return jobSheet
     }
 
-    fun calculateReturnBill(jobSheet: JobSheetEntity, returnTime: Long = System.currentTimeMillis()): ReturnCalculation {
-        val totalMsPerDay = 24 * 3600 * 1000.0
-        val durationMs = maxOf(0L, returnTime - jobSheet.checkoutTime)
-        // Rolling 24-hour window:
-        // Returns within 24 hours (e.g. 1 hour) are billed as exactly 1 day.
-        val totalDays = ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
-        val baseDays = 1
-        val daysLate = (totalDays - baseDays).coerceAtLeast(0)
+    suspend fun createJobSheet(
+        customer: CustomerEntity,
+        machine: MachineEntity,
+        categoryName: String,
+        quantity: Int,
+        rateUsed: Double,
+        discount: Double,
+        depositAmount: Double,
+        depositMethod: String,
+        billingCycle: String,
+        checkoutUser: UserEntity,
+        handledUser: UserEntity,
+        notes: String,
+        personPhotoPath: String? = null,
+        idPhotoPath: String? = null,
+        machinePhotoPath: String? = null,
+        explicitDueTime: Long? = null,
+        context: Context? = null
+    ): JobSheetEntity {
+        val singleItem = SelectedMachineItem(
+            machineId = machine.id,
+            machineName = machine.name,
+            categoryId = machine.categoryId,
+            categoryName = categoryName,
+            quantity = quantity,
+            rate = rateUsed
+        )
+        return createJobSheet(
+            customer = customer,
+            items = listOf(singleItem),
+            discount = discount,
+            depositAmount = depositAmount,
+            depositMethod = depositMethod,
+            billingCycle = billingCycle,
+            checkoutUser = checkoutUser,
+            handledUser = handledUser,
+            notes = notes,
+            personPhotoPath = personPhotoPath,
+            idPhotoPath = idPhotoPath,
+            machinePhotoPath = machinePhotoPath,
+            explicitDueTime = explicitDueTime,
+            context = context
+        )
+    }
 
-        val baseRentalFee = jobSheet.rateUsed * jobSheet.quantity * baseDays
-        val lateFee = jobSheet.rateUsed * jobSheet.quantity * daysLate
-        val netTotalFee = max(0.0, (baseRentalFee + lateFee) - jobSheet.discount)
-        val balanceDueOrRefund = netTotalFee - jobSheet.depositAmount
+    fun calculateDaysUsed(checkoutTime: Long, returnTime: Long = System.currentTimeMillis()): Int {
+        val totalMsPerDay = 24 * 3600 * 1000.0
+        val durationMs = maxOf(0L, returnTime - checkoutTime)
+        return ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+    }
+
+    fun calculateReturnBill(
+        jobSheet: JobSheetEntity,
+        returningQuantity: Int = jobSheet.remainingActiveQty,
+        manualDiscount: Double = 0.0,
+        returnTime: Long = System.currentTimeMillis()
+    ): ReturnCalculation {
+        val daysUsed = calculateDaysUsed(jobSheet.checkoutTime, returnTime)
+        val dailyRate = jobSheet.rateUsed
+        val qty = returningQuantity.coerceAtLeast(1)
+
+        // Formula: (Days Used × Daily Rate) - Initial Advance Deposit (and manual discount)
+        val baseRentalFee = daysUsed * dailyRate * qty
+        val initialDiscountProrated = if (jobSheet.effectiveInitialQty > 0) {
+            (jobSheet.discount * qty) / jobSheet.effectiveInitialQty
+        } else {
+            jobSheet.discount
+        }
+        val totalDiscount = initialDiscountProrated + manualDiscount
+        val netTotalFee = max(0.0, baseRentalFee - totalDiscount)
+
+        val depositAllocated = if (jobSheet.remainingActiveQty > 0) {
+            (jobSheet.depositAmount * qty) / jobSheet.remainingActiveQty
+        } else {
+            jobSheet.depositAmount
+        }
+
+        val balanceDueOrRefund = netTotalFee - depositAllocated
 
         return ReturnCalculation(
-            baseDays = baseDays,
-            daysLate = daysLate,
+            baseDays = daysUsed,
+            daysLate = maxOf(0, daysUsed - 1),
             baseRentalFee = baseRentalFee,
-            lateFee = lateFee,
-            discount = jobSheet.discount,
-            depositAmount = jobSheet.depositAmount,
+            lateFee = 0.0,
+            discount = totalDiscount,
+            depositAmount = depositAllocated,
             netTotalFee = netTotalFee,
-            balanceDueOrRefund = balanceDueOrRefund
+            balanceDueOrRefund = balanceDueOrRefund,
+            daysUsed = daysUsed,
+            returningQuantity = qty,
+            dailyRate = dailyRate
         )
     }
 
@@ -259,12 +354,19 @@ class BabaRepository(private val db: AppDatabase) {
         jobSheetId: String,
         settlementMethod: String,
         currentUser: UserEntity,
+        manualDiscount: Double = 0.0,
         returnTime: Long = System.currentTimeMillis(),
         remark: String = "",
         context: Context? = null
     ): JobSheetEntity? {
         val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return null
-        val calc = calculateReturnBill(jobSheet, returnTime)
+        val calc = calculateReturnBill(
+            jobSheet = jobSheet,
+            returningQuantity = jobSheet.remainingActiveQty,
+            manualDiscount = manualDiscount,
+            returnTime = returnTime
+        )
+        val isNoWorkDone = settlementMethod == "no_work_done"
 
         val updatedJob = jobSheet.copy(
             returnTime = returnTime,
@@ -273,21 +375,60 @@ class BabaRepository(private val db: AppDatabase) {
             closedBy = currentUser.id,
             closedByName = currentUser.name,
             status = "closed",
-            lateFee = calc.lateFee,
-            totalRentalFee = calc.netTotalFee,
-            finalSettlement = calc.balanceDueOrRefund,
+            returnedQuantity = jobSheet.effectiveInitialQty,
+            quantity = 0,
+            discount = calc.discount,
+            lateFee = 0.0,
+            totalRentalFee = if (isNoWorkDone) 0.0 else calc.netTotalFee,
+            finalSettlement = 0.0, // Fully settled upon return; strictly no false balance due!
             returnRemark = remark
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
-        db.machineDao().incrementStock(jobSheet.machineId, jobSheet.quantity)
+        val itemsInJob = SelectedMachineItem.listFromJson(jobSheet.itemsJson)
+        if (itemsInJob.isNotEmpty()) {
+            itemsInJob.forEach { item ->
+                db.machineDao().incrementStock(item.machineId, item.quantity)
+            }
+        } else {
+            db.machineDao().incrementStock(jobSheet.machineId, jobSheet.remainingActiveQty)
+        }
 
         if (context != null) {
             com.example.util.DueAlarmScheduler.cancelAlarms(context, jobSheet.id)
         }
 
         // Record settlement, refund, or NIL return entry
-        if (calc.balanceDueOrRefund > 0) {
+        if (isNoWorkDone) {
+            if (jobSheet.depositAmount > 0) {
+                db.paymentDao().insertPayment(
+                    PaymentEntity(
+                        id = UUID.randomUUID().toString(),
+                        jobSheetId = jobSheet.id,
+                        amount = jobSheet.depositAmount,
+                        method = if (settlementMethod == "no_work_done") "cash" else settlementMethod,
+                        type = "refund",
+                        timestamp = returnTime,
+                        handledBy = currentUser.id,
+                        handledByName = currentUser.name,
+                        remark = "Full deposit refund - No work done"
+                    )
+                )
+            }
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheet.id,
+                    amount = 0.0,
+                    method = "no_work_done",
+                    type = "return_nil",
+                    timestamp = returnTime,
+                    handledBy = currentUser.id,
+                    handledByName = currentUser.name,
+                    remark = if (remark.isNotBlank()) remark else "Closed with NIL payment (No work done)"
+                )
+            )
+        } else if (calc.balanceDueOrRefund > 0) {
             db.paymentDao().insertPayment(
                 PaymentEntity(
                     id = UUID.randomUUID().toString(),
@@ -298,7 +439,7 @@ class BabaRepository(private val db: AppDatabase) {
                     timestamp = returnTime,
                     handledBy = currentUser.id,
                     handledByName = currentUser.name,
-                    remark = remark.ifEmpty { "Final settlement collected" }
+                    remark = remark.ifEmpty { "Final settlement collected (${calc.daysUsed} days used)" }
                 )
             )
         } else if (calc.balanceDueOrRefund < 0) {
@@ -312,11 +453,10 @@ class BabaRepository(private val db: AppDatabase) {
                     timestamp = returnTime,
                     handledBy = currentUser.id,
                     handledByName = currentUser.name,
-                    remark = remark.ifEmpty { "Deposit refund returned" }
+                    remark = remark.ifEmpty { "Deposit refund returned (${calc.daysUsed} days used)" }
                 )
             )
         } else {
-            // No payment collected at return -> Record NIL with Remark for Sales Report
             db.paymentDao().insertPayment(
                 PaymentEntity(
                     id = UUID.randomUUID().toString(),
@@ -327,18 +467,131 @@ class BabaRepository(private val db: AppDatabase) {
                     timestamp = returnTime,
                     handledBy = currentUser.id,
                     handledByName = currentUser.name,
-                    remark = if (remark.isNotBlank()) remark else "Closed with NIL payment"
+                    remark = if (remark.isNotBlank()) remark else "Closed with NIL payment (Account balanced)"
                 )
             )
         }
 
         // Log
-        val summary = "${currentUser.name} closed job sheet ${jobSheet.id}. Remark: ${remark.ifEmpty { "None" }}. Total fee: ₹${calc.netTotalFee}, Settlement: ₹${calc.balanceDueOrRefund}"
+        val summary = if (isNoWorkDone) {
+            "${currentUser.name} closed job sheet ${jobSheet.id} with NO WORK DONE (All payments NIL). Full deposit ₹${jobSheet.depositAmount} refunded."
+        } else {
+            "${currentUser.name} closed job sheet ${jobSheet.id}. Days used: ${calc.daysUsed}, Total fee: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via $settlementMethod. Remark: ${remark.ifEmpty { "None" }}"
+        }
         db.activityLogDao().insertLog(
             ActivityLogEntity(
                 id = UUID.randomUUID().toString(),
                 jobSheetId = jobSheet.id,
                 action = "returned",
+                performedBy = currentUser.id,
+                performedByName = currentUser.name,
+                timestamp = returnTime,
+                changeSummary = summary
+            )
+        )
+
+        return updatedJob
+    }
+
+    suspend fun markPartialReturned(
+        jobSheetId: String,
+        returningQuantity: Int,
+        settlementMethod: String,
+        currentUser: UserEntity,
+        manualDiscount: Double = 0.0,
+        returnTime: Long = System.currentTimeMillis(),
+        remark: String = "",
+        context: Context? = null
+    ): JobSheetEntity? {
+        val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return null
+        val calc = calculateReturnBill(
+            jobSheet = jobSheet,
+            returningQuantity = returningQuantity,
+            manualDiscount = manualDiscount,
+            returnTime = returnTime
+        )
+
+        val currentActiveQty = jobSheet.remainingActiveQty
+        val newRemainingQty = (currentActiveQty - returningQuantity).coerceAtLeast(0)
+        val newReturnedQty = jobSheet.returnedQuantity + returningQuantity
+        val isFullyClosed = newRemainingQty == 0
+
+        val remainingDeposit = maxOf(0.0, jobSheet.depositAmount - calc.depositAmount)
+
+        val updatedJob = jobSheet.copy(
+            quantity = newRemainingQty,
+            initialQuantity = jobSheet.effectiveInitialQty,
+            returnedQuantity = newReturnedQty,
+            depositAmount = remainingDeposit,
+            totalRentalFee = jobSheet.totalRentalFee + calc.netTotalFee,
+            finalSettlement = 0.0,
+            status = if (isFullyClosed) "closed" else "active",
+            returnTime = if (isFullyClosed) returnTime else jobSheet.returnTime,
+            returnedBy = currentUser.id,
+            returnedByName = currentUser.name,
+            closedBy = if (isFullyClosed) currentUser.id else jobSheet.closedBy,
+            closedByName = if (isFullyClosed) currentUser.name else jobSheet.closedByName,
+            returnRemark = if (isFullyClosed) remark else jobSheet.returnRemark
+        )
+
+        db.jobSheetDao().updateJobSheet(updatedJob)
+        db.machineDao().incrementStock(jobSheet.machineId, returningQuantity)
+
+        if (isFullyClosed && context != null) {
+            com.example.util.DueAlarmScheduler.cancelAlarms(context, jobSheet.id)
+        }
+
+        // Record payment for this partial return
+        if (calc.balanceDueOrRefund > 0) {
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheet.id,
+                    amount = calc.balanceDueOrRefund,
+                    method = settlementMethod,
+                    type = "settlement",
+                    timestamp = returnTime,
+                    handledBy = currentUser.id,
+                    handledByName = currentUser.name,
+                    remark = "Partial return of $returningQuantity machine(s). ${remark.ifEmpty { "Rent settled" }}"
+                )
+            )
+        } else if (calc.balanceDueOrRefund < 0) {
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheet.id,
+                    amount = kotlin.math.abs(calc.balanceDueOrRefund),
+                    method = settlementMethod,
+                    type = "refund",
+                    timestamp = returnTime,
+                    handledBy = currentUser.id,
+                    handledByName = currentUser.name,
+                    remark = "Partial return deposit refund for $returningQuantity machine(s). ${remark.ifEmpty { "Refunded" }}"
+                )
+            )
+        } else {
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheet.id,
+                    amount = 0.0,
+                    method = settlementMethod,
+                    type = "return_nil",
+                    timestamp = returnTime,
+                    handledBy = currentUser.id,
+                    handledByName = currentUser.name,
+                    remark = "Partial return of $returningQuantity machine(s) balanced (NIL). $remark"
+                )
+            )
+        }
+
+        val summary = "${currentUser.name} processed partial return: $returningQuantity units of ${jobSheet.machineName} returned ($newRemainingQty still active on ${jobSheet.id}). Net rent: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via $settlementMethod. Remark: $remark"
+        db.activityLogDao().insertLog(
+            ActivityLogEntity(
+                id = UUID.randomUUID().toString(),
+                jobSheetId = jobSheet.id,
+                action = if (isFullyClosed) "returned" else "partial_returned",
                 performedBy = currentUser.id,
                 performedByName = currentUser.name,
                 timestamp = returnTime,
@@ -425,11 +678,11 @@ class BabaRepository(private val db: AppDatabase) {
                 set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
             }.timeInMillis
 
-            // Net Revenue context calculations
-            val todayTotalRevenue = jobSheets.filter { it.checkoutTime >= startOfToday && !it.isDeleted }
-                .sumOf { if (it.status == "returned") it.totalRentalFee else it.depositAmount }
-            val monthlyTotalRevenue = jobSheets.filter { it.checkoutTime >= startOfMonth && !it.isDeleted }
-                .sumOf { if (it.status == "returned") it.totalRentalFee else it.depositAmount }
+            // Net Revenue context calculations (strictly excludes advance deposits, only includes finalized rental fee when closed)
+            val todayTotalRevenue = jobSheets.filter { (it.status == "returned" || it.status == "closed") && (it.returnTime ?: 0L) >= startOfToday && !it.isDeleted }
+                .sumOf { it.totalRentalFee }
+            val monthlyTotalRevenue = jobSheets.filter { (it.status == "returned" || it.status == "closed") && (it.returnTime ?: 0L) >= startOfMonth && !it.isDeleted }
+                .sumOf { it.totalRentalFee }
 
             val todayJobCount = jobSheets.count { it.checkoutTime >= startOfToday && !it.isDeleted }
             val monthJobCount = jobSheets.count { it.checkoutTime >= startOfMonth && !it.isDeleted }
@@ -471,8 +724,14 @@ class BabaRepository(private val db: AppDatabase) {
                 writer.append("\"${job.notes.replace("\"", "\"\"")}\"\n")
             }
 
+            val periodTotalRevenue = jobSheets.filter { (it.status == "returned" || it.status == "closed") && !it.isDeleted }
+                .sumOf { it.totalRentalFee }
+            val periodJobCount = jobSheets.count { !it.isDeleted }
+
             // Summary Context for Accountant convenience
             writer.append("\n\"--- FINANCIAL SUMMARY CONTEXT ---\",,,,,,,,,,,,,,,,,,,,\n")
+            writer.append("\"Selected Period Job Sheets\",\"$periodJobCount rentals\",,,,,,,,,,,,,,,,,,,,\n")
+            writer.append("\"Selected Period Net Revenue\",\"Rs ${periodTotalRevenue.toInt()}\",,,,,,,,,,,,,,,,,,,,\n")
             writer.append("\"Today's Sales (Net Revenue)\",\"Rs ${todayTotalRevenue.toInt()}\",,,,,,,,,,,,,,,,,,,,\n")
             writer.append("\"Today's Job Sheets\",\"$todayJobCount rentals\",,,,,,,,,,,,,,,,,,,,\n")
             writer.append("\"Monthly Sales (Net Revenue)\",\"Rs ${monthlyTotalRevenue.toInt()}\",,,,,,,,,,,,,,,,,,,,\n")
@@ -486,5 +745,37 @@ class BabaRepository(private val db: AppDatabase) {
             e.printStackTrace()
             return null
         }
+    }
+
+    suspend fun updateOwnerPhone(ownerId: String, newPhone: String) {
+        val user = db.userDao().getUserById(ownerId) ?: return
+        db.userDao().updateUser(user.copy(registeredPhone = newPhone))
+        db.activityLogDao().insertLog(
+            ActivityLogEntity(
+                id = "log_${System.currentTimeMillis()}",
+                jobSheetId = "OWNER_SECURITY",
+                action = "phone_updated",
+                performedBy = user.id,
+                performedByName = user.name,
+                timestamp = System.currentTimeMillis(),
+                changeSummary = "Registered security mobile number updated to +91 $newPhone for OTP verification"
+            )
+        )
+    }
+
+    suspend fun updateOwnerPin(ownerId: String, newPin: String) {
+        val user = db.userDao().getUserById(ownerId) ?: return
+        db.userDao().updateUser(user.copy(pin = newPin))
+        db.activityLogDao().insertLog(
+            ActivityLogEntity(
+                id = "log_${System.currentTimeMillis()}",
+                jobSheetId = "OWNER_SECURITY",
+                action = "pin_changed",
+                performedBy = user.id,
+                performedByName = user.name,
+                timestamp = System.currentTimeMillis(),
+                changeSummary = "Owner PIN was successfully changed via OTP verification"
+            )
+        )
     }
 }

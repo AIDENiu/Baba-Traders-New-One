@@ -77,7 +77,14 @@ fun ActivityLogScreen(
                     onClick = { selectedActionFilter = null },
                     label = { Text("All (${logs.size})", fontSize = 11.sp, maxLines = 1) }
                 )
-                listOf("deleted" to "Deletions", "edited" to "Edits", "created" to "New Jobs", "returned" to "Returns").forEach { (action, label) ->
+                listOf(
+                    "created" to "New Jobs",
+                    "returned" to "Returns",
+                    "partial_returned" to "Partial Returns",
+                    "payment" to "Payments",
+                    "edited" to "Edits",
+                    "deleted" to "Deletions"
+                ).forEach { (action, label) ->
                     val count = logs.count { it.action == action }
                     FilterChip(
                         selected = selectedActionFilter == action,
@@ -125,7 +132,8 @@ fun ActivityLogScreen(
                         val actionColor = when (log.action) {
                             "deleted" -> BabaOverdue
                             "edited" -> BabaYellowDark
-                            "returned" -> BabaSuccess
+                            "returned", "partial_returned", "payment", "closed" -> BabaSuccess
+                            "created" -> AccentBlue
                             else -> BabaRed
                         }
 
@@ -155,8 +163,11 @@ fun ActivityLogScreen(
                                         imageVector = when (log.action) {
                                             "deleted" -> Icons.Default.Delete
                                             "edited" -> Icons.Default.Edit
-                                            "returned" -> Icons.Default.Check
-                                            else -> Icons.Default.Add
+                                            "returned", "closed" -> Icons.Default.Check
+                                            "partial_returned" -> Icons.Default.AssignmentReturn
+                                            "payment" -> Icons.Default.Payments
+                                            "created" -> Icons.Default.Add
+                                            else -> Icons.Default.History
                                         },
                                         contentDescription = log.action,
                                         tint = actionColor,
@@ -242,11 +253,11 @@ fun ActivityLogScreen(
 
                     Button(
                         onClick = { selectedLogForDetail = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
+                        colors = ButtonDefaults.buttonColors(containerColor = BabaDark, contentColor = Color.White),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Close")
+                        Text("Close", color = Color.White)
                     }
                 }
             }

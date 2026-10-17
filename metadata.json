@@ -1,6 +1,6 @@
 {
-  "name": "BABA Job Sheet",
-  "description": "Machinery rental and job-sheet management app for BABA Traders & Engineering Hardwares",
+  "name": "Baba Traders",
+  "description": "Rental Management system for equipment, job sheets, inventory, and billing cycle policies.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

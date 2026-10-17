@@ -46,13 +46,15 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import com.example.ui.components.OwnerPinChangeWithOtpDialog
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 @Composable
 fun AuthScreen(
     users: List<UserEntity>,
-    onLoginSuccess: (UserEntity) -> Unit
+    onLoginSuccess: (UserEntity) -> Unit,
+    onOwnerPinReset: (owner: UserEntity, newPin: String) -> Unit = { _, _ -> }
 ) {
     val defaultOperators = remember {
         listOf(
@@ -91,6 +93,7 @@ fun AuthScreen(
     var failedAttempts by remember { mutableIntStateOf(0) }
     var lockoutUntil by remember { mutableLongStateOf(0L) }
     var isGoogleSigningIn by remember { mutableStateOf(false) }
+    var showOwnerOtpPinReset by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -151,18 +154,36 @@ fun AuthScreen(
                         color = BabaYellow,
                         letterSpacing = 1.2.sp
                     )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BabaYellow.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(top = 4.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "JOB SHEET & MACHINERY RENTALS",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BabaYellow.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = "JOB SHEET & MACHINERY RENTALS",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.White.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = "v${com.example.BuildConfig.VERSION_NAME}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaYellow,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -327,7 +348,35 @@ fun AuthScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    if (selectedUser?.role == "owner") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = { showOwnerOtpPinReset = true },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = BabaRed,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Forgot PIN? Reset via OTP",
+                                    fontSize = 12.sp,
+                                    color = BabaRed,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Login Button
                     Button(
@@ -396,7 +445,8 @@ fun AuthScreen(
                             isGoogleSigningIn = true
                             errorMessage = null
                             val clientId = try {
-                                context.getString(R.string.default_web_client_id)
+                                val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                                if (resId != 0) context.getString(resId) else throw IllegalStateException("Resource not found")
                             } catch (e: Exception) {
                                 isGoogleSigningIn = false
                                 errorMessage = "Google Sign-In configuration missing"
@@ -473,9 +523,30 @@ fun AuthScreen(
             Text(
                 text = "BABA Traders & Engineering Hardwares",
                 fontSize = 11.sp,
-                color = BabaGray
+                fontWeight = FontWeight.SemiBold,
+                color = BabaDark
+            )
+            Text(
+                text = "App Version ${com.example.BuildConfig.VERSION_NAME} (Build ${com.example.BuildConfig.VERSION_CODE})",
+                fontSize = 11.sp,
+                color = BabaGray,
+                modifier = Modifier.testTag("app_version_text")
             )
             Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (showOwnerOtpPinReset && selectedUser != null) {
+            val owner = selectedUser!!
+            OwnerPinChangeWithOtpDialog(
+                owner = owner,
+                onDismiss = { showOwnerOtpPinReset = false },
+                onPinChanged = { newPin ->
+                    onOwnerPinReset(owner, newPin)
+                    pin = newPin
+                    errorMessage = null
+                    showOwnerOtpPinReset = false
+                }
+            )
         }
     }
 }

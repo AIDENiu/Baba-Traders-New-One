@@ -48,6 +48,7 @@ fun OwnerDashboardScreen(
     onNavigateToCustomers: () -> Unit,
     onNavigateToReports: () -> Unit,
     onNavigateToStaff: () -> Unit,
+    onNavigateToStaffPerformance: () -> Unit = {},
     onNavigateToActivityLog: () -> Unit,
     onReturnJobClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
@@ -122,25 +123,48 @@ fun OwnerDashboardScreen(
                         modifier = Modifier.padding(top = 2.dp)
                     )
 
-                    // Daily Sales Row
+                    // Daily Sales & Cash Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         MetricCard(
-                            title = "Today's Sales (Net Revenue)",
+                            title = "Today's Sales (Net)",
                             value = "₹${stats.todayRevenue.toInt()}",
-                            subtitle = "Deposits + settlements today",
+                            subtitle = "Finalized fee from closed rentals",
                             icon = Icons.Default.CurrencyRupee,
                             iconColor = BabaSuccess,
                             modifier = Modifier.weight(1f)
                         )
                         MetricCard(
-                            title = "Today's Job Sheets",
-                            value = "${stats.todayJobSheetsCount}",
-                            subtitle = "Rentals processed today",
-                            icon = Icons.Default.Receipt,
-                            iconColor = BabaRed,
+                            title = "Total Cash in Today",
+                            value = "₹${stats.totalCashToday.toInt()}",
+                            subtitle = "Net cash register (incl. advances)",
+                            icon = Icons.Default.Payments,
+                            iconColor = BabaDark,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // Separate Dashboard Counters: Advance In & Advance Out
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        MetricCard(
+                            title = "Advance In (Today)",
+                            value = "₹${stats.advanceInToday.toInt()}",
+                            subtitle = "Advance deposits collected",
+                            icon = Icons.Default.ArrowDownward,
+                            iconColor = BabaSuccess,
+                            modifier = Modifier.weight(1f)
+                        )
+                        MetricCard(
+                            title = "Advance Out (Today)",
+                            value = "₹${stats.advanceOutToday.toInt()}",
+                            subtitle = "Advance deposits refunded",
+                            icon = Icons.Default.ArrowUpward,
+                            iconColor = BabaOverdue,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -151,19 +175,20 @@ fun OwnerDashboardScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         MetricCard(
-                            title = "Monthly Sales (Net Revenue)",
+                            title = "Monthly Sales (Net)",
                             value = "₹${stats.monthlyRevenue.toInt()}",
-                            subtitle = "Total collected this month",
+                            subtitle = "Tap to view monthly reports",
                             icon = Icons.AutoMirrored.Filled.TrendingUp,
                             iconColor = BabaYellowDark,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            onClick = onNavigateToReports
                         )
                         MetricCard(
-                            title = "Monthly Job Sheets",
-                            value = "${stats.monthlyJobSheetsCount}",
-                            subtitle = "Rentals this month",
-                            icon = Icons.Default.DateRange,
-                            iconColor = BabaDark,
+                            title = "Today's Job Sheets",
+                            value = "${stats.todayJobSheetsCount}",
+                            subtitle = "Rentals created today",
+                            icon = Icons.Default.Receipt,
+                            iconColor = BabaRed,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -182,9 +207,9 @@ fun OwnerDashboardScreen(
                             modifier = Modifier.weight(1f)
                         )
                         MetricCard(
-                            title = "Full Customer Dues",
+                            title = "Pending Dues",
                             value = "₹${stats.totalCustomerDues.toInt()}",
-                            subtitle = "Outstanding balances",
+                            subtitle = "Overdue/active balances",
                             icon = Icons.Default.AccountBalanceWallet,
                             iconColor = BabaYellowDark,
                             modifier = Modifier.weight(1f)
@@ -193,192 +218,7 @@ fun OwnerDashboardScreen(
                 }
             }
 
-            // Staff Accountability Metrics (Checkout & Handling)
-            item {
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(BabaRedLight, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.People, contentDescription = "Staff", tint = BabaRed, modifier = Modifier.size(18.dp))
-                            }
-                            Column {
-                                Text(
-                                    text = "Staff Performance & Handling",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BabaDark
-                                )
-                                Text(
-                                    text = "Accountability breakdown for billing & equipment handover",
-                                    fontSize = 11.sp,
-                                    color = BabaGray
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (stats.staffPerformance.isEmpty()) {
-                            Text("No staff activity recorded yet", fontSize = 12.sp, color = BabaGray)
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                stats.staffPerformance.forEach { staff ->
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = BabaLightGray,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(28.dp)
-                                                            .background(if (staff.role == "owner") BabaRed else BabaDark, CircleShape),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Text(
-                                                            text = staff.staffName.take(1).uppercase(),
-                                                            color = Color.White,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    }
-                                                    Text(
-                                                        text = staff.staffName,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 14.sp,
-                                                        color = BabaDark
-                                                    )
-                                                }
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = if (staff.role == "owner") BabaRedLight else Color.White
-                                                ) {
-                                                    Text(
-                                                        text = staff.role.uppercase(),
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = if (staff.role == "owner") BabaRed else BabaGray,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-
-                                            Spacer(modifier = Modifier.height(8.dp))
-
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                // Checkout Agent metric
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = Color.White,
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(8.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.PointOfSale,
-                                                            contentDescription = "Checkout",
-                                                            tint = BabaSuccess,
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                        Column {
-                                                            Text(
-                                                                text = "Checkout Agent",
-                                                                fontSize = 10.sp,
-                                                                color = BabaGray,
-                                                                fontWeight = FontWeight.SemiBold
-                                                            )
-                                                            Text(
-                                                                text = "${staff.staffName}: ${staff.checkoutsToday} checkouts today",
-                                                                fontSize = 11.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = BabaDark
-                                                            )
-                                                            Text(
-                                                                text = "(${staff.checkoutsMonth} this month)",
-                                                                fontSize = 9.sp,
-                                                                color = BabaGray
-                                                            )
-                                                        }
-                                                    }
-                                                }
-
-                                                // Handled By metric
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = Color.White,
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(8.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Handyman,
-                                                            contentDescription = "Handled",
-                                                            tint = BabaRed,
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                        Column {
-                                                            Text(
-                                                                text = "Handled By",
-                                                                fontSize = 10.sp,
-                                                                color = BabaGray,
-                                                                fontWeight = FontWeight.SemiBold
-                                                            )
-                                                            Text(
-                                                                text = "${staff.staffName}: ${staff.handledToday} handovers today",
-                                                                fontSize = 11.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = BabaDark
-                                                            )
-                                                            Text(
-                                                                text = "(${staff.handledMonth} this month)",
-                                                                fontSize = 9.sp,
-                                                                color = BabaGray
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Quick Nav Action Grid
+            // Quick Nav Action Grid (Shop Management)
             item {
                 Text(
                     text = "Shop Management",
@@ -425,8 +265,8 @@ fun OwnerDashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ShopActionTile(
-                        title = "Reports & CSV",
-                        subtitle = "Export data",
+                        title = "Monthly Reports",
+                        subtitle = "Month & dates filter",
                         icon = Icons.Default.Assessment,
                         color = BabaSuccess,
                         modifier = Modifier.weight(1f),
@@ -448,6 +288,109 @@ fun OwnerDashboardScreen(
                         modifier = Modifier.weight(1f),
                         onClick = onNavigateToActivityLog
                     )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Detailed Staff Performance & Handling Option inside Shop Management
+                val totalCheckoutsToday = stats.staffPerformance.sumOf { it.checkoutsToday }
+                val totalHandoversToday = stats.staffPerformance.sumOf { it.handledToday }
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White,
+                    shadowElevation = 1.5.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaRed.copy(alpha = 0.25f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onNavigateToStaffPerformance() }
+                        .testTag("shop_management_staff_performance_tile")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(BabaRedLight, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Analytics,
+                                    contentDescription = "Staff Performance & Handling",
+                                    tint = BabaRed,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Staff Performance & Handling",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BabaDark
+                                )
+                                Text(
+                                    text = "Detailed checkout billing, equipment handovers, returns & cash metrics",
+                                    fontSize = 10.5.sp,
+                                    color = BabaGray
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = BabaSuccessLight
+                                    ) {
+                                        Text(
+                                            text = "Today: $totalCheckoutsToday Checkouts",
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaSuccess,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = BabaRedLight
+                                    ) {
+                                        Text(
+                                            text = "$totalHandoversToday Handovers",
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaRed,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = BabaLightGray
+                                    ) {
+                                        Text(
+                                            text = "${stats.staffPerformance.size} Staff",
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaDark,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Open Details",
+                            tint = BabaRed,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
 
@@ -574,7 +517,8 @@ fun OwnerDashboardScreen(
                                     .background(
                                         when (log.action) {
                                             "created" -> BabaSuccessLight
-                                            "returned" -> BabaYellowLight
+                                            "returned", "partial_returned" -> BabaYellowLight
+                                            "payment" -> BabaSuccessLight
                                             "deleted" -> BabaOverdueLight
                                             else -> BabaLightGray
                                         },
@@ -585,14 +529,16 @@ fun OwnerDashboardScreen(
                                 Icon(
                                     imageVector = when (log.action) {
                                         "created" -> Icons.Default.Add
-                                        "returned" -> Icons.Default.Check
+                                        "returned", "partial_returned" -> Icons.Default.Check
+                                        "payment" -> Icons.Default.Payments
                                         "deleted" -> Icons.Default.Delete
                                         else -> Icons.Default.Edit
                                     },
                                     contentDescription = log.action,
                                     tint = when (log.action) {
                                         "created" -> BabaSuccess
-                                        "returned" -> BabaYellowDark
+                                        "returned", "partial_returned" -> BabaYellowDark
+                                        "payment" -> BabaSuccess
                                         "deleted" -> BabaOverdue
                                         else -> BabaDark
                                     },
@@ -617,6 +563,27 @@ fun OwnerDashboardScreen(
                     }
                 }
             }
+
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "BABA Traders & Engineering Hardwares",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = BabaDark
+                    )
+                    Text(
+                        text = "App Version ${com.example.BuildConfig.VERSION_NAME} (Build ${com.example.BuildConfig.VERSION_CODE})",
+                        fontSize = 10.5.sp,
+                        color = BabaGray
+                    )
+                }
+            }
         }
     }
 }
@@ -628,13 +595,14 @@ fun MetricCard(
     subtitle: String,
     icon: ImageVector,
     iconColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
-        modifier = modifier
+        modifier = if (onClick != null) modifier.clickable { onClick() } else modifier
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(

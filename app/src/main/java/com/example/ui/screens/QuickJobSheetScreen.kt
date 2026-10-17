@@ -39,10 +39,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import com.example.BuildConfig
 import com.example.data.model.CustomerEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
+import com.example.data.model.SelectedMachineItem
 import com.example.data.model.UserEntity
 import com.example.ui.components.ReceiptDialog
 import com.example.ui.theme.*
@@ -51,6 +53,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -65,10 +68,7 @@ fun QuickJobSheetScreen(
     onFindCustomerByPhone: suspend (String) -> CustomerEntity?,
     onCreateJobSheet: (
         customer: CustomerEntity,
-        machine: MachineEntity,
-        categoryName: String,
-        quantity: Int,
-        rateUsed: Double,
+        items: List<SelectedMachineItem>,
         discount: Double,
         depositAmount: Double,
         depositMethod: String,
@@ -89,50 +89,73 @@ fun QuickJobSheetScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val activeStaffList = remember(staffList, currentUser) {
-        if (staffList.isNotEmpty()) staffList else listOf(currentUser)
-    }
-    var selectedCheckoutUser by remember(activeStaffList, currentUser) {
-        mutableStateOf(activeStaffList.firstOrNull { it.id == currentUser.id } ?: activeStaffList.first())
-    }
-    var selectedHandledUser by remember(activeStaffList, currentUser) {
-        mutableStateOf(activeStaffList.firstOrNull { it.id == currentUser.id } ?: activeStaffList.first())
-    }
-
-    // Customer fields
+    // 1. Customer State
     var phone by remember { mutableStateOf("") }
     var customerName by remember { mutableStateOf("") }
     var customerAddress by remember { mutableStateOf("") }
     var isReturningCustomer by remember { mutableStateOf(false) }
+
+    // 2. Multi-Category & Multi-Machine Selection State
+    var selectedCategoryId by remember(categories) {
+        mutableStateOf(categories.firstOrNull()?.id ?: "all")
+    }
+
+    val filteredMachines = remember(machines, selectedCategoryId) {
+        if (selectedCategoryId == "all") machines else machines.filter { it.categoryId == selectedCategoryId }
+    }
+
+    // Map of machineId -> SelectedMachineItem so users can pick machines across ANY categories
+    val selectedItemsMap = remember { mutableStateMapOf<String, SelectedMachineItem>() }
+
+    // Initialize with the first available machine if nothing selected yet and machines load for the first time
+    var didAutoInitSelection by remember { mutableStateOf(false) }
+    LaunchedEffect(machines, categories) {
+        if (!didAutoInitSelection && machines.isNotEmpty() && selectedItemsMap.isEmpty()) {
+            val firstAvail = machines.firstOrNull { it.availableQty > 0 } ?: machines.firstOrNull()
+            if (firstAvail != null) {
+                val catName = categories.firstOrNull { it.id == firstAvail.categoryId }?.name ?: "Hardware"
+                selectedItemsMap[firstAvail.id] = SelectedMachineItem(
+                    machineId = firstAvail.id,
+                    machineName = firstAvail.name,
+                    categoryId = firstAvail.categoryId,
+                    categoryName = catName,
+                    quantity = 1,
+                    rate = firstAvail.currentRate
+                )
+                didAutoInitSelection = true
+            }
+        }
+    }
+
+    val combinedDailyRate = selectedItemsMap.values.sumOf { it.quantity * it.rate }
+
+    // 3. Rate, Discount & Billing Cycle State
+    var dailyRateText by remember { mutableStateOf("500") }
+    LaunchedEffect(combinedDailyRate) {
+        dailyRateText = if (combinedDailyRate % 1.0 == 0.0) {
+            combinedDailyRate.toInt().toString()
+        } else {
+            combinedDailyRate.toString()
+        }
+    }
+    var discountText by remember { mutableStateOf("0") }
+    var billingCycle by remember { mutableStateOf("24hr") } // "24hr" or "working_hours"
+    var dueTimeMillis by remember { mutableStateOf(System.currentTimeMillis() + (24 * 60 * 60 * 1000L)) }
+
+    // 4. Security Deposit & ID Photo State (matches screenshot)
+    var depositText by remember { mutableStateOf("500") }
+    var depositMethod by remember { mutableStateOf("cash") } // "cash" or "upi"
     var idPhotoFrontPath by remember { mutableStateOf<String?>(null) }
     var idPhotoBackPath by remember { mutableStateOf<String?>(null) }
     var personPhotoPath by remember { mutableStateOf<String?>(null) }
     var machinePhotoPath by remember { mutableStateOf<String?>(null) }
-
-    // Machine fields
-    var selectedCategoryId by remember(categories) { mutableStateOf(categories.firstOrNull()?.id ?: "") }
-    val filteredMachines = remember(machines, selectedCategoryId) {
-        machines.filter { it.categoryId == selectedCategoryId }
-    }
-    var selectedMachine by remember(filteredMachines) { mutableStateOf(filteredMachines.firstOrNull()) }
-
-    // Pricing & Terms fields
-    var quantityText by remember { mutableStateOf("1") }
-    var rateText by remember(selectedMachine) { mutableStateOf((selectedMachine?.currentRate ?: 350.0).toString()) }
-    var discountText by remember { mutableStateOf("0") }
-    var billingCycle by remember { mutableStateOf("24hr") } // "24hr" or "working_hours"
-    var dueTimeMillis by remember { mutableStateOf(System.currentTimeMillis() + (24 * 60 * 60 * 1000L)) }
-    var depositText by remember { mutableStateOf("500") }
-    var depositMethod by remember { mutableStateOf("cash") } // "cash", "upi", "card", "bank"
     var notes by remember { mutableStateOf("") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var createdJobSheetForReceipt by remember { mutableStateOf<JobSheetEntity?>(null) }
 
-    // Photo Capture / Gallery State
-    // activePhotoSide: "person", "machine", "id_front", "id_back" (or legacy "front"/"back")
-    var activePhotoSide by remember { mutableStateOf<String?>(null) }
-    var showPhotoSourceDialog by remember { mutableStateOf(false) }
+    // Photo Capture Support
+    var targetPhotoType by remember { mutableStateOf<String?>(null) } // "front" or "back"
     var tempCameraFile by remember { mutableStateOf<File?>(null) }
     var previewPhotoPath by remember { mutableStateOf<String?>(null) }
 
@@ -142,11 +165,9 @@ fun QuickJobSheetScreen(
         if (success) {
             val path = tempCameraFile?.absolutePath
             if (path != null) {
-                when (activePhotoSide) {
-                    "person" -> personPhotoPath = path
-                    "machine" -> machinePhotoPath = path
-                    "id_front", "front" -> idPhotoFrontPath = path
-                    "id_back", "back" -> idPhotoBackPath = path
+                when (targetPhotoType) {
+                    "front" -> idPhotoFrontPath = path
+                    "back" -> idPhotoBackPath = path
                 }
                 Toast.makeText(context, "Photo captured locally", Toast.LENGTH_SHORT).show()
             }
@@ -157,7 +178,7 @@ fun QuickJobSheetScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            val tag = activePhotoSide ?: "photo"
+            val tag = targetPhotoType ?: "id_photo"
             val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
             tempCameraFile = file
             try {
@@ -167,7 +188,7 @@ fun QuickJobSheetScreen(
                 Toast.makeText(context, "Could not open camera: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
             }
         } else {
-            Toast.makeText(context, "Camera permission is required to capture photo", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Camera permission required to capture photo", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -177,31 +198,29 @@ fun QuickJobSheetScreen(
         if (uri != null) {
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val tag = activePhotoSide ?: "photo"
+                    val tag = targetPhotoType ?: "id_photo"
                     val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         FileOutputStream(file).use { output ->
                             input.copyTo(output)
                         }
                     }
-                    when (activePhotoSide) {
-                        "person" -> personPhotoPath = file.absolutePath
-                        "machine" -> machinePhotoPath = file.absolutePath
-                        "id_front", "front" -> idPhotoFrontPath = file.absolutePath
-                        "id_back", "back" -> idPhotoBackPath = file.absolutePath
+                    when (targetPhotoType) {
+                        "front" -> idPhotoFrontPath = file.absolutePath
+                        "back" -> idPhotoBackPath = file.absolutePath
                     }
                 } catch (e: Exception) {
-                    // handled
+                    // ignore
                 }
             }
         }
     }
 
-    fun startCameraCapture() {
+    fun startCameraFor(type: String) {
+        targetPhotoType = type
         val permission = Manifest.permission.CAMERA
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
-            val tag = activePhotoSide ?: "photo"
-            val file = File(context.filesDir, "${tag}_${System.currentTimeMillis()}.jpg")
+            val file = File(context.filesDir, "${type}_${System.currentTimeMillis()}.jpg")
             tempCameraFile = file
             try {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -214,7 +233,14 @@ fun QuickJobSheetScreen(
         }
     }
 
-    // Search customer as phone changes
+    fun startGalleryFor(type: String) {
+        targetPhotoType = type
+        galleryPickerLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+
+    // Auto-fill returning customer by phone
     LaunchedEffect(phone) {
         if (phone.length >= 10) {
             val existing = onFindCustomerByPhone(phone.trim())
@@ -235,7 +261,26 @@ fun QuickJobSheetScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("New Job Sheet", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "New Job Sheet",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = Color.White
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = BabaYellow.copy(alpha = 0.25f)
+                            ) {
+                                Text(
+                                    text = "v${BuildConfig.VERSION_NAME}",
+                                    color = BabaYellow,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = "BABA Traders • Handled by ${currentUser.name}",
                             fontSize = 11.sp,
@@ -266,9 +311,9 @@ fun QuickJobSheetScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // STEP 1: Customer Details
+            // STEP 1: Customer Information
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
@@ -352,170 +397,405 @@ fun QuickJobSheetScreen(
                 }
             }
 
-            // STEP 2: Select Machine & Inventory
+            // STEP 2: Select Machine & Category (Supports selecting multiple machines across ANY category)
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .background(BabaRed, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("2", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        Text(
-                            text = "Select Machine & Category",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = BabaDark
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Category Filter Chips (Horizontally scrollable to avoid text compression)
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        categories.forEach { cat ->
-                            val isSelected = cat.id == selectedCategoryId
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    selectedCategoryId = cat.id
-                                    val first = machines.firstOrNull { it.categoryId == cat.id }
-                                    selectedMachine = first
-                                    if (first != null) {
-                                        rateText = first.currentRate.toString()
-                                    }
-                                },
-                                label = { Text(cat.name, fontSize = 11.sp, maxLines = 1) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Machine Selector List / Radio Cards
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        filteredMachines.forEach { mach ->
-                            val isSelected = selectedMachine?.id == mach.id
-                            Surface(
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .border(
-                                        width = if (isSelected) 2.dp else 1.dp,
-                                        color = if (isSelected) BabaRed else BabaBorder,
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
-                                    .clickable {
-                                        selectedMachine = mach
-                                        rateText = mach.currentRate.toString()
-                                    },
-                                color = if (isSelected) BabaRedLight else Color.White
+                                    .size(24.dp)
+                                    .background(BabaRed, CircleShape),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = mach.name,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp,
-                                            color = BabaDark
-                                        )
-                                        Text(
-                                            text = mach.modelOrSpecs,
-                                            fontSize = 11.sp,
-                                            color = BabaGray
-                                        )
-                                        Text(
-                                            text = "Standard Rate: ₹${mach.baseRate}/day",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = BabaRed
-                                        )
-                                    }
+                                Text("2", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Column {
+                                Text(
+                                    text = "Select Machine & Category",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = BabaDark
+                                )
+                                Text(
+                                    text = "Switch categories to add multiple machines to one order",
+                                    fontSize = 10.5.sp,
+                                    color = BabaGray
+                                )
+                            }
+                        }
 
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (mach.availableQty > 0) BabaSuccessLight else BabaOverdueLight
-                                    ) {
-                                        Text(
-                                            text = if (mach.availableQty > 0) "${mach.availableQty} Avail" else "OUT OF STOCK",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (mach.availableQty > 0) BabaSuccess else BabaOverdue,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
+                        if (selectedItemsMap.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = BabaRedLight
+                            ) {
+                                Text(
+                                    text = "${selectedItemsMap.values.sumOf { it.quantity }} Selected",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BabaRed,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
                             }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Quantity selector
+                    // Category filter chips row (switching categories preserves all selected items!)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Quantity to Rent", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val currentQty = quantityText.toIntOrNull() ?: 1
-                            IconButton(
-                                onClick = {
-                                    if (currentQty > 1) quantityText = (currentQty - 1).toString()
-                                },
-                                modifier = Modifier.size(36.dp)
+                        categories.forEach { cat ->
+                            val isSelected = cat.id == selectedCategoryId
+                            val countInCat = selectedItemsMap.values
+                                .filter { it.categoryId == cat.id }
+                                .sumOf { it.quantity }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) BabaYellowLight else Color.White,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isSelected) BabaYellowDark else if (countInCat > 0) BabaRed else BabaBorder
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        selectedCategoryId = cat.id
+                                    }
+                                    .testTag("category_chip_${cat.id}")
                             ) {
-                                Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Minus", tint = BabaRed)
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = cat.name,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected || countInCat > 0) FontWeight.Bold else FontWeight.Medium,
+                                        color = BabaDark
+                                    )
+                                    if (countInCat > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .background(BabaRed, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "$countInCat",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                            Text(
-                                text = quantityText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Black,
-                                color = BabaDark
-                            )
-                            IconButton(
-                                onClick = {
-                                    val avail = selectedMachine?.availableQty ?: 1
-                                    if (currentQty < avail) quantityText = (currentQty + 1).toString()
-                                },
-                                modifier = Modifier.size(36.dp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Machine Items List in Selected Category
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        filteredMachines.forEach { mach ->
+                            val existingItem = selectedItemsMap[mach.id]
+                            val isSelected = existingItem != null
+                            val catName = categories.firstOrNull { it.id == mach.categoryId }?.name ?: "Hardware"
+
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) BabaRed else BabaBorder,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable {
+                                        if (isSelected) {
+                                            selectedItemsMap.remove(mach.id)
+                                        } else if (mach.availableQty > 0) {
+                                            selectedItemsMap[mach.id] = SelectedMachineItem(
+                                                machineId = mach.id,
+                                                machineName = mach.name,
+                                                categoryId = mach.categoryId,
+                                                categoryName = catName,
+                                                quantity = 1,
+                                                rate = mach.currentRate
+                                            )
+                                        } else {
+                                            Toast.makeText(context, "${mach.name} is currently out of stock", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    .testTag("machine_card_${mach.id}"),
+                                color = if (isSelected) Color(0xFFFFF9F9) else Color.White
                             ) {
-                                Icon(Icons.Default.AddCircleOutline, contentDescription = "Plus", tint = BabaRed)
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                                                    tint = if (isSelected) BabaRed else BabaGray,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Text(
+                                                    text = mach.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    color = BabaDark
+                                                )
+                                            }
+                                            if (mach.modelOrSpecs.isNotEmpty()) {
+                                                Text(
+                                                    text = mach.modelOrSpecs,
+                                                    fontSize = 12.sp,
+                                                    color = BabaGray,
+                                                    modifier = Modifier.padding(top = 2.dp, start = 24.dp)
+                                                )
+                                            }
+                                            Text(
+                                                text = "Standard Rate: ₹${mach.baseRate.toInt()}/day",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BabaRed,
+                                                modifier = Modifier.padding(top = 4.dp, start = 24.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (mach.availableQty > 0) BabaSuccessLight else BabaOverdueLight
+                                        ) {
+                                            Text(
+                                                text = if (mach.availableQty > 0) "${mach.availableQty} Avail" else "Out of Stock",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (mach.availableQty > 0) BabaSuccess else BabaOverdue,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Quantity Selector inside the selected machine card
+                                    if (isSelected && existingItem != null) {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        HorizontalDivider(color = BabaBorder.copy(alpha = 0.6f))
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Quantity to Rent",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = BabaDark
+                                                )
+                                                Text(
+                                                    text = "Subtotal: ₹${(existingItem.quantity * existingItem.rate).toInt()}/day",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = BabaSuccess
+                                                )
+                                            }
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = Color.White,
+                                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, BabaRed),
+                                                    modifier = Modifier
+                                                        .size(30.dp)
+                                                        .clip(CircleShape)
+                                                        .clickable {
+                                                            if (existingItem.quantity > 1) {
+                                                                selectedItemsMap[mach.id] = existingItem.copy(quantity = existingItem.quantity - 1)
+                                                            } else {
+                                                                selectedItemsMap.remove(mach.id)
+                                                            }
+                                                        }
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Remove,
+                                                            contentDescription = "Decrease",
+                                                            tint = BabaRed,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Text(
+                                                    text = "${existingItem.quantity}",
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = BabaDark,
+                                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                                )
+
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = Color.White,
+                                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, BabaRed),
+                                                    modifier = Modifier
+                                                        .size(30.dp)
+                                                        .clip(CircleShape)
+                                                        .clickable {
+                                                            if (existingItem.quantity < mach.availableQty) {
+                                                                selectedItemsMap[mach.id] = existingItem.copy(quantity = existingItem.quantity + 1)
+                                                            }
+                                                        }
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Add,
+                                                            contentDescription = "Increase",
+                                                            tint = BabaRed,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Selected Machines Summary Across All Categories
+                    if (selectedItemsMap.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BabaLightGray,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Selected Items Across Categories (${selectedItemsMap.size})",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaDark
+                                    )
+                                    Text(
+                                        text = "Total: ₹${combinedDailyRate.toInt()}/day",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaRed
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                selectedItemsMap.values.forEach { item ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 3.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "${item.quantity}x ${item.machineName}",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BabaDark
+                                                )
+                                                Text(
+                                                    text = "${item.categoryName} • ₹${item.rate.toInt()}/day each",
+                                                    fontSize = 10.sp,
+                                                    color = BabaGray
+                                                )
+                                            }
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = "₹${(item.quantity * item.rate).toInt()}",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BabaDark
+                                                )
+                                                IconButton(
+                                                    onClick = { selectedItemsMap.remove(item.machineId) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Remove ${item.machineName}",
+                                                        tint = BabaOverdue,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // STEP 3: Rates, Discount & Billing Cycle
+            // STEP 3: Rate, Discount & Billing Cycle (Matches screenshot)
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -532,16 +812,27 @@ fun QuickJobSheetScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
+                    // Daily Rate (₹) and Discount (₹) side by side
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         OutlinedTextField(
-                            value = rateText,
-                            onValueChange = { rateText = it },
-                            label = { Text("Daily Rate (₹)") },
+                            value = dailyRateText,
+                            onValueChange = { newRateStr ->
+                                dailyRateText = newRateStr
+                                val parsed = newRateStr.toDoubleOrNull()
+                                if (parsed != null && selectedItemsMap.size == 1) {
+                                    val onlyKey = selectedItemsMap.keys.first()
+                                    val onlyItem = selectedItemsMap[onlyKey]
+                                    if (onlyItem != null && onlyItem.quantity > 0) {
+                                        selectedItemsMap[onlyKey] = onlyItem.copy(rate = parsed / onlyItem.quantity)
+                                    }
+                                }
+                            },
+                            label = { Text("Total Daily Rate (₹)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = babaTextFieldColors(),
                             textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
@@ -558,7 +849,7 @@ fun QuickJobSheetScreen(
                             textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
                             supportingText = {
                                 if (currentUser.role == "worker") {
-                                    Text("Worker cap: ₹${currentUser.maxDiscountAmount.toInt()}", color = BabaGray, fontSize = 9.sp)
+                                    Text("Worker limit: ₹${currentUser.maxDiscountAmount.toInt()}", color = BabaGray, fontSize = 9.sp)
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -566,16 +857,17 @@ fun QuickJobSheetScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Billing Cycle Toggle (24hr vs Working Hours)
-                    Text("Billing Cycle Policy", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    Text("Billing Cycle Policy", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // 24-Hour Cycle vs Working Hours cards side by side
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        // 24-Hour Cycle
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -585,15 +877,20 @@ fun QuickJobSheetScreen(
                                     color = if (billingCycle == "24hr") BabaRed else BabaBorder,
                                     shape = RoundedCornerShape(10.dp)
                                 )
-                                .clickable { billingCycle = "24hr" },
-                            color = if (billingCycle == "24hr") BabaRedLight else Color.White
+                                .clickable {
+                                    billingCycle = "24hr"
+                                    dueTimeMillis = System.currentTimeMillis() + (24 * 60 * 60 * 1000L)
+                                },
+                            color = if (billingCycle == "24hr") Color(0xFFFFF0F0) else Color.White
                         ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Text("24-Hour Cycle", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = BabaDark)
-                                Text("Due exactly +24 hours from checkout", fontSize = 10.sp, color = BabaGray)
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("24-Hour Cycle", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("Due exactly +24 hours from checkout", fontSize = 10.5.sp, color = BabaGray)
                             }
                         }
 
+                        // 1 Day operation
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -603,67 +900,63 @@ fun QuickJobSheetScreen(
                                     color = if (billingCycle == "working_hours") BabaRed else BabaBorder,
                                     shape = RoundedCornerShape(10.dp)
                                 )
-                                .clickable { billingCycle = "working_hours" },
-                            color = if (billingCycle == "working_hours") BabaRedLight else Color.White
+                                .clickable {
+                                    billingCycle = "working_hours"
+                                    dueTimeMillis = Calendar.getInstance().apply {
+                                        add(Calendar.DAY_OF_MONTH, 1)
+                                        set(Calendar.HOUR_OF_DAY, 0)
+                                        set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }.timeInMillis
+                                },
+                            color = if (billingCycle == "working_hours") Color(0xFFFFF0F0) else Color.White
                         ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Text("24-Hour Operation", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = BabaDark)
-                                Text("12:00 AM - 12:00 AM cycle. Rentals returned within 24 hours count as 1 day.", fontSize = 10.sp, color = BabaGray)
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("1 Day operation", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("12:00 AM – 12:00 AM", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Explicit Due Date Selector
-                    Text("Rental Due Date *", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    // Due Time display
                     val dateFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy, hh:mm a", Locale.getDefault()) }
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = BabaBg,
                         border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(12.dp),
+                            modifier = Modifier.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Default.Event, contentDescription = "Due Date", tint = BabaRed)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.Event, contentDescription = null, tint = BabaRed, modifier = Modifier.size(16.dp))
                                 Column {
-                                    Text(
-                                        text = dateFormat.format(Date(dueTimeMillis)),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = BabaDark
-                                    )
-                                    Text(
-                                        text = "Alarms fire 2h before and on due date",
-                                        fontSize = 10.sp,
-                                        color = BabaGray
-                                    )
+                                    Text("Due Date: ${dateFormat.format(Date(dueTimeMillis))}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                                    Text("Alarms notify 2 hours prior to due return", fontSize = 9.5.sp, color = BabaGray)
                                 }
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                 IconButton(
                                     onClick = {
-                                        val dayMs = 24 * 60 * 60 * 1000L
-                                        if (dueTimeMillis - dayMs > System.currentTimeMillis()) {
-                                            dueTimeMillis -= dayMs
-                                        }
+                                        val dayMs = 24 * 3600 * 1000L
+                                        if (dueTimeMillis - dayMs > System.currentTimeMillis()) dueTimeMillis -= dayMs
                                     },
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(28.dp)
                                 ) {
-                                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "-1 Day", tint = BabaDark)
+                                    Icon(Icons.Default.Remove, contentDescription = "-1d", modifier = Modifier.size(14.dp))
                                 }
                                 IconButton(
-                                    onClick = {
-                                        dueTimeMillis += 24 * 60 * 60 * 1000L
-                                    },
-                                    modifier = Modifier.size(32.dp)
+                                    onClick = { dueTimeMillis += 24 * 3600 * 1000L },
+                                    modifier = Modifier.size(28.dp)
                                 ) {
-                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "+1 Day", tint = BabaRed)
+                                    Icon(Icons.Default.Add, contentDescription = "+1d", modifier = Modifier.size(14.dp), tint = BabaRed)
                                 }
                             }
                         }
@@ -671,14 +964,17 @@ fun QuickJobSheetScreen(
                 }
             }
 
-            // STEP 4: Security Deposit & ID Photo Capture
+            // STEP 4: Security Deposit & ID Photo (Matches screenshot)
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -695,11 +991,12 @@ fun QuickJobSheetScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
+                    // Security Deposit (₹) and Deposit Method (Cash / UPI)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedTextField(
@@ -713,20 +1010,60 @@ fun QuickJobSheetScreen(
                             shape = RoundedCornerShape(10.dp)
                         )
 
-                        Column(modifier = Modifier.weight(1.3f)) {
-                            Text("Mode of Payment *", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.SemiBold)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (methodKey, label) ->
-                                    FilterChip(
-                                        selected = depositMethod == methodKey,
-                                        onClick = { depositMethod = methodKey },
-                                        label = { Text(label, fontSize = 11.sp) }
-                                    )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Deposit Method", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.Medium)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // Cash Button
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (depositMethod == "cash") BabaYellowLight else Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (depositMethod == "cash") BabaYellowDark else BabaBorder
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { depositMethod = "cash" }
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Cash",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaDark
+                                        )
+                                    }
+                                }
+
+                                // UPI Button
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (depositMethod == "upi") BabaYellowLight else Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (depositMethod == "upi") BabaYellowDark else BabaBorder
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { depositMethod = "upi" }
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "UPI",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaDark
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -734,103 +1071,51 @@ fun QuickJobSheetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Mandatory Local Photos: Person, ID, Machine (Stored Locally Only)
+                    // Customer ID Document (Stored Locally Only)   Aadhaar / DL
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Customer & ID Photos (App-Private Storage Only)",
+                            text = "Customer ID Document (Stored Locally Only)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = BabaDark
                         )
                         Text(
-                            text = "Never uploaded to cloud",
-                            fontSize = 10.sp,
-                            color = BabaSuccess,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Person Photo Card
-                        IdDocumentCard(
-                            title = "Person Photo *",
-                            imagePath = personPhotoPath,
-                            onCardClick = {
-                                activePhotoSide = "person"
-                                showPhotoSourceDialog = true
-                            },
-                            onPreviewClick = {
-                                previewPhotoPath = personPhotoPath
-                            },
-                            onRemoveClick = {
-                                personPhotoPath = null
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        // ID Photo Front Card
-                        IdDocumentCard(
-                            title = "ID Document *",
-                            imagePath = idPhotoFrontPath,
-                            onCardClick = {
-                                activePhotoSide = "id_front"
-                                showPhotoSourceDialog = true
-                            },
-                            onPreviewClick = {
-                                previewPhotoPath = idPhotoFrontPath
-                            },
-                            onRemoveClick = {
-                                idPhotoFrontPath = null
-                            },
-                            modifier = Modifier.weight(1f)
+                            text = "Aadhaar / DL",
+                            fontSize = 11.sp,
+                            color = BabaGray
                         )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    // Front Photo and Back Photo cards side by side (Exact match to screenshot)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Machine Photo Card
-                        IdDocumentCard(
-                            title = "Machine Photo *",
-                            imagePath = machinePhotoPath,
-                            onCardClick = {
-                                activePhotoSide = "machine"
-                                showPhotoSourceDialog = true
-                            },
-                            onPreviewClick = {
-                                previewPhotoPath = machinePhotoPath
-                            },
-                            onRemoveClick = {
-                                machinePhotoPath = null
-                            },
+                        // Front Photo Card
+                        IdPhotoUploadBox(
+                            title = "Front Photo",
+                            imagePath = idPhotoFrontPath,
+                            onCameraClick = { startCameraFor("front") },
+                            onGalleryClick = { startGalleryFor("front") },
+                            onPreviewClick = { previewPhotoPath = idPhotoFrontPath },
+                            onRemoveClick = { idPhotoFrontPath = null },
                             modifier = Modifier.weight(1f)
                         )
 
-                        // ID Back Photo (Optional / Secondary)
-                        IdDocumentCard(
-                            title = "ID Back (Opt)",
+                        // Back Photo Card
+                        IdPhotoUploadBox(
+                            title = "Back Photo",
                             imagePath = idPhotoBackPath,
-                            onCardClick = {
-                                activePhotoSide = "id_back"
-                                showPhotoSourceDialog = true
-                            },
-                            onPreviewClick = {
-                                previewPhotoPath = idPhotoBackPath
-                            },
-                            onRemoveClick = {
-                                idPhotoBackPath = null
-                            },
+                            onCameraClick = { startCameraFor("back") },
+                            onGalleryClick = { startGalleryFor("back") },
+                            onPreviewClick = { previewPhotoPath = idPhotoBackPath },
+                            onRemoveClick = { idPhotoBackPath = null },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -840,85 +1125,12 @@ fun QuickJobSheetScreen(
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it },
-                        label = { Text("Rental Notes / Specific Job Details") },
+                        label = { Text("Rental Notes / Specific Job Details (Optional)") },
                         colors = babaTextFieldColors(),
                         textStyle = babaInputTextStyle(),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
                     )
-                }
-            }
-
-            // STEP 5: Staff Accountability (Checkout & Handling)
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .background(BabaRed, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("5", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            }
-                            Text(
-                                text = "Checkout Attribution (Automatic)",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = BabaDark
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = BabaSuccessLight
-                        ) {
-                            Text(
-                                text = "SESSION LOCKED",
-                                color = BabaSuccess,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = BabaBg,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = BabaRed)
-                            Column {
-                                Text(
-                                    text = "Checked Out & Handled By: ${currentUser.name}",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = BabaDark
-                                )
-                                Text(
-                                    text = "Derived automatically from active session (${currentUser.role.replaceFirstChar { it.uppercase() }}). No manual staff selection allowed.",
-                                    fontSize = 11.sp,
-                                    color = BabaGray
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -952,63 +1164,43 @@ fun QuickJobSheetScreen(
                         errorMessage = "Customer phone must be a valid 10-digit number"
                         return@Button
                     }
-                    val loc = customerAddress.trim()
-                    if (loc.isEmpty()) {
-                        errorMessage = "Location / Site address is mandatory and cannot be skipped"
+
+                    if (selectedItemsMap.isEmpty()) {
+                        errorMessage = "Please select at least one machine to rent"
                         return@Button
                     }
-                    if (personPhotoPath == null) {
-                        errorMessage = "Customer person photo is mandatory (stored locally on device only)"
-                        return@Button
+
+                    // Validate available stock for each selected machine across categories
+                    for (item in selectedItemsMap.values) {
+                        val mach = machines.firstOrNull { it.id == item.machineId }
+                        if (mach != null && item.quantity > mach.availableQty) {
+                            errorMessage = "Only ${mach.availableQty} units available in stock for ${mach.name}"
+                            return@Button
+                        }
                     }
-                    if (idPhotoFrontPath == null && idPhotoBackPath == null) {
-                        errorMessage = "Customer ID document photo is mandatory (stored locally on device only)"
-                        return@Button
-                    }
-                    if (machinePhotoPath == null) {
-                        errorMessage = "Machine photo is mandatory (stored locally on device only)"
-                        return@Button
-                    }
-                    val machine = selectedMachine
-                    if (machine == null) {
-                        errorMessage = "Please select a machine"
-                        return@Button
-                    }
-                    val qty = quantityText.toIntOrNull() ?: 1
-                    if (qty <= 0) {
-                        errorMessage = "Quantity must be at least 1"
-                        return@Button
-                    }
-                    if (qty > machine.availableQty) {
-                        errorMessage = "Only ${machine.availableQty} units available in stock"
-                        return@Button
-                    }
-                    val rate = rateText.toDoubleOrNull() ?: machine.currentRate
+
                     val discount = discountText.toDoubleOrNull() ?: 0.0
-                    val deposit = depositText.toDoubleOrNull() ?: 0.0
+                    val deposit = depositText.toDoubleOrNull() ?: 500.0
 
                     if (currentUser.role == "worker" && discount > currentUser.maxDiscountAmount) {
                         errorMessage = "Worker discount cannot exceed ₹${currentUser.maxDiscountAmount.toInt()} floor"
                         return@Button
                     }
 
+                    val itemsList = selectedItemsMap.values.toList()
+
                     val customer = CustomerEntity(
                         id = "cust_" + (cleanPhone.ifEmpty { UUID.randomUUID().toString() }),
                         name = custName,
                         phone = cleanPhone,
-                        address = loc,
+                        address = customerAddress.trim(),
                         idPhotoFrontPath = idPhotoFrontPath,
                         idPhotoBackPath = idPhotoBackPath
                     )
 
-                    val category = categories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Hardware"
-
                     onCreateJobSheet(
                         customer,
-                        machine,
-                        category,
-                        qty,
-                        rate,
+                        itemsList,
                         discount,
                         deposit,
                         depositMethod,
@@ -1049,7 +1241,7 @@ fun QuickJobSheetScreen(
         }
     }
 
-    // Show Receipt Dialog on successful job sheet creation!
+    // Receipt Dialog on created
     if (createdJobSheetForReceipt != null) {
         ReceiptDialog(
             jobSheet = createdJobSheetForReceipt!!,
@@ -1060,282 +1252,16 @@ fun QuickJobSheetScreen(
         )
     }
 
-    // Photo Source Selection Dialog (Camera vs Gallery)
-    if (showPhotoSourceDialog) {
-        val sideLabel = when (activePhotoSide) {
-            "person" -> "Person"
-            "machine" -> "Machine"
-            "id_front", "front" -> "ID Document Front"
-            "id_back", "back" -> "ID Document Back"
-            else -> "Photo"
-        }
-        val existingPath = when (activePhotoSide) {
-            "person" -> personPhotoPath
-            "machine" -> machinePhotoPath
-            "id_front", "front" -> idPhotoFrontPath
-            "id_back", "back" -> idPhotoBackPath
-            else -> null
-        }
-
-        AlertDialog(
-            onDismissRequest = { showPhotoSourceDialog = false },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AddAPhoto,
-                        contentDescription = "Photo",
-                        tint = BabaRed,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Text(
-                        text = "Add $sideLabel Photo",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BabaDark
-                    )
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "Choose how to capture or select photo (stored locally on this device only):",
-                        fontSize = 12.sp,
-                        color = BabaGray
-                    )
-
-                    // Option 1: Camera
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, BabaBorder, RoundedCornerShape(12.dp))
-                            .clickable {
-                                showPhotoSourceDialog = false
-                                startCameraCapture()
-                            },
-                        color = Color.White
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(BabaRedLight, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CameraAlt,
-                                    contentDescription = "Camera",
-                                    tint = BabaRed,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Take Photo (Camera)",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BabaDark
-                                )
-                                Text(
-                                    text = "Capture $sideLabel ID with device camera",
-                                    fontSize = 11.sp,
-                                    color = BabaGray
-                                )
-                            }
-                        }
-                    }
-
-                    // Option 2: Gallery
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, BabaBorder, RoundedCornerShape(12.dp))
-                            .clickable {
-                                showPhotoSourceDialog = false
-                                galleryPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                        color = Color.White
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(BabaYellowLight, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PhotoLibrary,
-                                    contentDescription = "Gallery",
-                                    tint = BabaYellowDark,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Add Photo (Gallery / Files)",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BabaDark
-                                )
-                                Text(
-                                    text = "Select from saved photos on device",
-                                    fontSize = 11.sp,
-                                    color = BabaGray
-                                )
-                            }
-                        }
-                    }
-
-                    // Option 3: View current if present
-                    if (existingPath != null) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, BabaBorder, RoundedCornerShape(12.dp))
-                                .clickable {
-                                    showPhotoSourceDialog = false
-                                    previewPhotoPath = existingPath
-                                },
-                            color = Color.White
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(BabaLightGray, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Visibility,
-                                        contentDescription = "Preview",
-                                        tint = BabaDark,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                Column {
-                                    Text(
-                                        text = "View Stored $sideLabel Photo",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BabaDark
-                                    )
-                                    Text(
-                                        text = "Preview current image",
-                                        fontSize = 11.sp,
-                                        color = BabaGray
-                                    )
-                                }
-                            }
-                        }
-
-                        // Option 4: Remove photo
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, BabaOverdue.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable {
-                                    when (activePhotoSide) {
-                                        "person" -> personPhotoPath = null
-                                        "machine" -> machinePhotoPath = null
-                                        "id_front", "front" -> idPhotoFrontPath = null
-                                        "id_back", "back" -> idPhotoBackPath = null
-                                    }
-                                    showPhotoSourceDialog = false
-                                },
-                            color = BabaOverdueLight
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color.White, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Remove",
-                                        tint = BabaOverdue,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                Column {
-                                    Text(
-                                        text = "Remove $sideLabel Photo",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BabaOverdue
-                                    )
-                                    Text(
-                                        text = "Delete photo from this sheet",
-                                        fontSize = 11.sp,
-                                        color = BabaOverdue.copy(alpha = 0.8f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showPhotoSourceDialog = false }) {
-                    Text("Cancel", color = BabaGray, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            shape = RoundedCornerShape(16.dp),
-            containerColor = Color.White
-        )
-    }
-
-    // Full Screen / Dialog Image Preview
+    // Preview Dialog
     if (previewPhotoPath != null) {
         Dialog(onDismissRequest = { previewPhotoPath = null }) {
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
@@ -1343,39 +1269,29 @@ fun QuickJobSheetScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = if (previewPhotoPath == idPhotoFrontPath) "Front ID Document" else "Back ID Document",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = BabaDark
-                        )
+                        Text("ID Photo Preview", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = BabaDark)
                         IconButton(onClick = { previewPhotoPath = null }) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = BabaDark)
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
+                    Spacer(modifier = Modifier.height(8.dp))
                     AsyncImage(
                         model = File(previewPhotoPath!!),
-                        contentDescription = "ID Photo Preview",
+                        contentDescription = "ID Photo",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 380.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, BabaBorder, RoundedCornerShape(12.dp)),
+                            .heightIn(max = 360.dp)
+                            .clip(RoundedCornerShape(10.dp)),
                         contentScale = ContentScale.Fit
                     )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
+                    Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = { previewPhotoPath = null },
                         colors = ButtonDefaults.buttonColors(containerColor = BabaDark),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Close Preview")
+                        Text("Close", color = Color.White)
                     }
                 }
             }
@@ -1383,11 +1299,17 @@ fun QuickJobSheetScreen(
     }
 }
 
+/**
+ * ID Document Photo Upload Card matching the screenshot:
+ * Shows a red camera circle button and a yellow gallery circle button,
+ * "Front Photo" / "Back Photo", and "Add Photo / Camera" subtitle.
+ */
 @Composable
-private fun IdDocumentCard(
+private fun IdPhotoUploadBox(
     title: String,
     imagePath: String?,
-    onCardClick: () -> Unit,
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit,
     onPreviewClick: () -> Unit,
     onRemoveClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1396,18 +1318,14 @@ private fun IdDocumentCard(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .border(
-                width = if (imagePath != null) 1.5.dp else 1.dp,
+                width = 1.dp,
                 color = if (imagePath != null) BabaSuccess else BabaBorder,
                 shape = RoundedCornerShape(12.dp)
             ),
-        color = if (imagePath != null) Color.White else Color.White
+        color = Color.White
     ) {
         if (imagePath != null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
+            Column(modifier = Modifier.padding(8.dp)) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1430,7 +1348,7 @@ private fun IdDocumentCard(
                     ) {
                         IconButton(
                             onClick = onRemoveClick,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         ) {
                             Icon(
                                 Icons.Default.Close,
@@ -1440,58 +1358,20 @@ private fun IdDocumentCard(
                             )
                         }
                     }
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(4.dp),
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.Black.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        ) {
-                            Icon(Icons.Default.ZoomIn, contentDescription = "View", tint = Color.White, modifier = Modifier.size(12.dp))
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text("View", color = Color.White, fontSize = 9.sp)
-                        }
-                    }
                 }
-
                 Spacer(modifier = Modifier.height(6.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = "Stored",
-                            tint = BabaSuccess,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = title,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = BabaSuccess
-                        )
-                    }
-
+                    Text(text = title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaSuccess)
                     Text(
                         text = "Change",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = BabaRed,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { onCardClick() }
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                        modifier = Modifier.clickable { onCameraClick() }
                     )
                 }
             }
@@ -1499,44 +1379,52 @@ private fun IdDocumentCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onCardClick() }
-                    .padding(vertical = 14.dp, horizontal = 8.dp),
+                    .padding(vertical = 16.dp, horizontal = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
+                    // Red Camera circle button
+                    Surface(
                         modifier = Modifier
-                            .size(32.dp)
-                            .background(BabaRedLight, CircleShape),
-                        contentAlignment = Alignment.Center
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { onCameraClick() },
+                        color = BabaRedLight
                     ) {
-                        Icon(
-                            Icons.Default.CameraAlt,
-                            contentDescription = "Camera",
-                            tint = BabaRed,
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Take Photo",
+                                tint = BabaRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                    Box(
+
+                    // Yellow Gallery circle button
+                    Surface(
                         modifier = Modifier
-                            .size(32.dp)
-                            .background(BabaYellowLight, CircleShape),
-                        contentAlignment = Alignment.Center
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { onGalleryClick() },
+                        color = BabaYellowLight
                     ) {
-                        Icon(
-                            Icons.Default.PhotoLibrary,
-                            contentDescription = "Add Photo",
-                            tint = BabaYellowDark,
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.PhotoLibrary,
+                                contentDescription = "Pick Photo",
+                                tint = BabaYellowDark,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
                     text = title,

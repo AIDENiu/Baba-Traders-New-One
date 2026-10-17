@@ -23,7 +23,22 @@ val BabaSuccess = Color(0xFF00875A)
 val BabaSuccessLight = Color(0xFFE3FCEF)
 val BabaOverdue = Color(0xFFD32F2F)
 val BabaOverdueLight = Color(0xFFFFEBEE)
-val BabaBorder = Color(0xFFBDBDBD) // Crisp high-contrast border so input boxes are clearly visible
+val BabaBorder = Color(0xFFBDBDBD)
+
+// Legacy alias compatibility
+val IndustrialAmber = Color(0xFFD97706)
+val IndustrialAmberLight = Color(0xFFF59E0B)
+val IndustrialAmberDark = Color(0xFFB45309)
+val Slate900 = Color(0xFF0F172A)
+val Slate800 = Color(0xFF1E293B)
+val Slate700 = Color(0xFF334155)
+val Slate600 = Color(0xFF475569)
+val Slate200 = Color(0xFFE2E8F0)
+val Slate100 = Color(0xFFF1F5F9)
+val Slate50 = Color(0xFFF8FAFC)
+val AccentGreen = Color(0xFF10B981)
+val AccentRed = Color(0xFFEF4444)
+val AccentBlue = Color(0xFF3B82F6)
 
 fun babaInputTextStyle(
     fontSize: androidx.compose.ui.unit.TextUnit = 15.sp,
@@ -57,19 +72,5 @@ fun babaTextFieldColors() = OutlinedTextFieldDefaults.colors(
     errorLabelColor = BabaOverdue,
     focusedPlaceholderColor = BabaGray,
     unfocusedPlaceholderColor = BabaGray,
-    disabledPlaceholderColor = BabaGray,
-    errorPlaceholderColor = BabaOverdue,
-    focusedLeadingIconColor = BabaRed,
-    unfocusedLeadingIconColor = BabaGray,
-    disabledLeadingIconColor = BabaGray,
-    errorLeadingIconColor = BabaOverdue,
-    focusedTrailingIconColor = BabaGray,
-    unfocusedTrailingIconColor = BabaGray,
-    disabledTrailingIconColor = BabaGray,
-    errorTrailingIconColor = BabaOverdue,
-    focusedPrefixColor = BabaDark,
-    unfocusedPrefixColor = BabaDark,
-    focusedSuffixColor = BabaDark,
-    unfocusedSuffixColor = BabaDark
+    disabledPlaceholderColor = BabaGray
 )
-

@@ -79,7 +79,7 @@ object PdfGenerator {
         paint.color = COLOR_SECONDARY
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         paint.textSize = 13f
-        val docType = if (jobSheet.status == "returned") "TAX INVOICE & RECEIPT" else "RENTAL JOB SHEET"
+        val docType = if (jobSheet.status == "returned" || jobSheet.status == "closed") "TAX INVOICE & RECEIPT" else "RENTAL JOB SHEET"
         val docTypeWidth = paint.measureText(docType)
         canvas.drawText(docType, PAGE_WIDTH - 36f - docTypeWidth, 42f, paint)
 
@@ -111,12 +111,12 @@ object PdfGenerator {
         // Status Pill Badge
         val statusText = jobSheet.status.uppercase(Locale.getDefault())
         val statusColor = when (jobSheet.status) {
-            "returned" -> COLOR_SUCCESS
+            "returned", "closed" -> COLOR_SUCCESS
             "overdue" -> COLOR_OVERDUE
             else -> COLOR_PRIMARY
         }
         val statusBgColor = when (jobSheet.status) {
-            "returned" -> Color.rgb(232, 245, 233)
+            "returned", "closed" -> Color.rgb(232, 245, 233)
             "overdue" -> Color.rgb(255, 235, 238)
             else -> Color.rgb(255, 248, 225)
         }
@@ -185,7 +185,7 @@ object PdfGenerator {
         canvas.drawText("Yard Handler: ${jobSheet.handledByName}", 36f + colWidth + 26f, y + 48f, paint)
         val returnStaff = if (jobSheet.returnedByName.isNotBlank()) jobSheet.returnedByName else "Pending return"
         canvas.drawText("Returned To: $returnStaff", 36f + colWidth + 26f, y + 62f, paint)
-        val cycleDesc = if (jobSheet.billingCycle == "24hr") "24-Hour Rolling Cycle" else "24-Hour Operation"
+        val cycleDesc = if (jobSheet.billingCycle == "24hr") "24-Hour Rolling Cycle" else "1 Day operation"
         canvas.drawText("Policy: $cycleDesc", 36f + colWidth + 26f, y + 76f, paint)
 
         y += colHeight + 16f
@@ -309,8 +309,11 @@ object PdfGenerator {
 
         val settlementText: String
         val settlementColor: Int
-        if (jobSheet.status == "returned") {
-            if (jobSheet.finalSettlement > 0) {
+        if (jobSheet.status == "returned" || jobSheet.status == "closed") {
+            if (jobSheet.returnRemark.contains("no work done", ignoreCase = true) || (jobSheet.totalRentalFee == 0.0 && jobSheet.finalSettlement == 0.0 && jobSheet.returnTime != null)) {
+                settlementText = "No Work Done (NIL Payment)"
+                settlementColor = COLOR_DARK
+            } else if (jobSheet.finalSettlement > 0) {
                 settlementText = "Balance Collected: ₹${jobSheet.finalSettlement.toInt()}"
                 settlementColor = COLOR_OVERDUE
             } else if (jobSheet.finalSettlement < 0) {
@@ -410,7 +413,8 @@ object PdfGenerator {
         context: Context,
         jobSheets: List<JobSheetEntity>,
         payments: List<PaymentEntity>,
-        generatedByName: String
+        generatedByName: String,
+        periodTitle: String? = null
     ): File {
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create()
@@ -431,12 +435,16 @@ object PdfGenerator {
         }.timeInMillis
 
         val nonDeleted = jobSheets.filter { !it.isDeleted }
-        val thisMonthJobs = nonDeleted.filter { it.checkoutTime >= startOfMonth }
         val activeRentals = nonDeleted.filter { it.status == "active" || it.status == "overdue" }
-        val returnedRentals = nonDeleted.filter { it.status == "returned" }
+        val returnedRentals = nonDeleted.filter { it.status == "returned" || it.status == "closed" }
 
         val totalDepositsHeld = activeRentals.sumOf { it.depositAmount }
-        val totalRevenueCollected = payments.filter { it.type != "refund" }.sumOf { it.amount } - payments.filter { it.type == "refund" }.sumOf { it.amount }
+        val totalRevenueCollected = if (payments.isNotEmpty()) {
+            val netPay = payments.filter { it.type != "refund" }.sumOf { it.amount } - payments.filter { it.type == "refund" }.sumOf { it.amount }
+            if (netPay > 0) netPay else returnedRentals.sumOf { it.totalRentalFee }
+        } else {
+            returnedRentals.sumOf { it.totalRentalFee }
+        }
         val lateFeesCollected = nonDeleted.sumOf { it.lateFee }
 
         // 1. TOP HEADER BANNER
@@ -452,9 +460,8 @@ object PdfGenerator {
         paint.textSize = 20f
         canvas.drawText("BABA TRADERS", 36f, 38f, paint)
 
-        paint.textSize = 10f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        canvas.drawText("Monthly Financial & Rental Audit Statement", 36f, 54f, paint)
+        val subtitleText = if (!periodTitle.isNullOrBlank()) periodTitle else "Monthly Financial & Rental Audit Statement"
+        canvas.drawText(subtitleText, 36f, 54f, paint)
 
         paint.color = Color.rgb(255, 235, 238)
         paint.textSize = 8.5f
@@ -476,8 +483,9 @@ object PdfGenerator {
 
         // Card 1: Total Net Revenue
         drawKpiCard(canvas, paint, 36f, y, cardWidth, cardHeight, "TOTAL NET REVENUE", "₹${totalRevenueCollected.toInt()}", "Deposits & Settlements", COLOR_SUCCESS)
-        // Card 2: Monthly Job Sheets
-        drawKpiCard(canvas, paint, 36f + cardWidth + 12f, y, cardWidth, cardHeight, "MONTHLY JOB SHEETS", "${thisMonthJobs.size} rentals", "Created this calendar month", COLOR_PRIMARY)
+        // Card 2: Period Job Sheets
+        val kpi2Title = if (periodTitle?.contains("Month", ignoreCase = true) == true) "MONTHLY JOB SHEETS" else "PERIOD JOB SHEETS"
+        drawKpiCard(canvas, paint, 36f + cardWidth + 12f, y, cardWidth, cardHeight, kpi2Title, "${nonDeleted.size} rentals", "In selected period", COLOR_PRIMARY)
 
         y += cardHeight + 10f
 
@@ -594,14 +602,14 @@ object PdfGenerator {
             // Status Badge
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             paint.color = when (job.status) {
-                "returned" -> COLOR_SUCCESS
+                "returned", "closed" -> COLOR_SUCCESS
                 "overdue" -> COLOR_OVERDUE
                 else -> COLOR_PRIMARY
             }
             canvas.drawText(job.status.uppercase(Locale.getDefault()), 420f, y + 14f, paint)
 
             paint.color = COLOR_DARK
-            val amountStr = if (job.status == "returned") "₹${job.totalRentalFee.toInt()}" else "₹${job.depositAmount.toInt()}"
+            val amountStr = if (job.status == "returned" || job.status == "closed") "₹${job.totalRentalFee.toInt()}" else "₹${job.depositAmount.toInt()}"
             canvas.drawText(amountStr, 480f, y + 14f, paint)
 
             y += 20f
@@ -722,10 +730,11 @@ object PdfGenerator {
         context: Context,
         jobSheets: List<JobSheetEntity>,
         payments: List<PaymentEntity>,
-        generatedByName: String
+        generatedByName: String,
+        periodTitle: String? = null
     ) {
         try {
-            val file = generateReportPdf(context, jobSheets, payments, generatedByName)
+            val file = generateReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 
             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -734,7 +743,7 @@ object PdfGenerator {
                 putExtra(Intent.EXTRA_SUBJECT, "BABA Traders Financial Performance Report")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Monthly Financial & Rental Audit Statement from BABA Traders & Engineering Hardwares."
+                    "Financial & Rental Audit Statement from BABA Traders & Engineering Hardwares."
                 )
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -751,10 +760,11 @@ object PdfGenerator {
         context: Context,
         jobSheets: List<JobSheetEntity>,
         payments: List<PaymentEntity>,
-        generatedByName: String
+        generatedByName: String,
+        periodTitle: String? = null
     ) {
         try {
-            val file = generateReportPdf(context, jobSheets, payments, generatedByName)
+            val file = generateReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 
             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -764,7 +774,7 @@ object PdfGenerator {
             }
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
-            shareReportPdf(context, jobSheets, payments, generatedByName)
+            shareReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
             Toast.makeText(context, "No PDF viewer found. Opening share menu.", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(context, "Unable to open report PDF: ${e.message}", Toast.LENGTH_LONG).show()

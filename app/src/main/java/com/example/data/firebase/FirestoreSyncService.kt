@@ -28,12 +28,17 @@ class FirestoreSyncService(
     private val roomDb: AppDatabase,
     private val scope: CoroutineScope
 ) {
-    val firestore: FirebaseFirestore by lazy {
-        val dbId = context.getString(R.string.firestore_database_id)
-        FirebaseFirestore.getInstance(dbId)
+    val firestore: FirebaseFirestore? by lazy {
+        try {
+            val dbId = context.getString(R.string.firestore_database_id)
+            FirebaseFirestore.getInstance(dbId)
+        } catch (e: Exception) {
+            Log.e("FirestoreSync", "Firestore instance unavailable: ${e.message}")
+            null
+        }
     }
 
-    private val auth = Firebase.auth
+    private val auth get() = try { Firebase.auth } catch (e: Exception) { null }
 
     private var jobSheetsListener: ListenerRegistration? = null
     private var machinesListener: ListenerRegistration? = null
@@ -47,14 +52,15 @@ class FirestoreSyncService(
     val syncError: StateFlow<String?> = _syncError.asStateFlow()
 
     fun startRealtimeListeners() {
-        val currentUser = auth.currentUser ?: return
+        val fs = firestore ?: return
+        val currentUser = auth?.currentUser ?: return
         stopRealtimeListeners()
 
         _isSyncing.value = true
 
         // 1. Real-time Snapshot Listener for Job Sheets
         val jobSheetsPath = "job_sheets"
-        jobSheetsListener = firestore.collection(jobSheetsPath)
+        jobSheetsListener = fs.collection(jobSheetsPath)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     val errJson = handleFirestoreError(error, OperationType.LIST, jobSheetsPath)
@@ -140,7 +146,7 @@ class FirestoreSyncService(
 
         // 2. Real-time Snapshot Listener for Machines
         val machinesPath = "machines"
-        machinesListener = firestore.collection(machinesPath)
+        machinesListener = fs.collection(machinesPath)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     handleFirestoreError(error, OperationType.LIST, machinesPath)
@@ -180,7 +186,7 @@ class FirestoreSyncService(
 
         // 3. Real-time Snapshot Listener for Customers
         val customersPath = "customers"
-        customersListener = firestore.collection(customersPath)
+        customersListener = fs.collection(customersPath)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     handleFirestoreError(error, OperationType.LIST, customersPath)
@@ -215,7 +221,7 @@ class FirestoreSyncService(
 
         // 4. Real-time Snapshot Listener for Activity Logs (audit trail)
         val activityPath = "activity_log"
-        activityLogListener = firestore.collection(activityPath)
+        activityLogListener = fs.collection(activityPath)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     handleFirestoreError(error, OperationType.LIST, activityPath)
@@ -268,6 +274,7 @@ class FirestoreSyncService(
     // --- Outbound Mutations to Firestore ---
 
     suspend fun pushJobSheet(jobSheet: JobSheetEntity) {
+        val fs = firestore ?: return
         val path = "job_sheets/${jobSheet.id}"
         val payload = hashMapOf<String, Any?>(
             "id" to jobSheet.id,
@@ -301,7 +308,7 @@ class FirestoreSyncService(
             "updatedAt" to FieldValue.serverTimestamp()
         )
         try {
-            firestore.collection("job_sheets").document(jobSheet.id)
+            fs.collection("job_sheets").document(jobSheet.id)
                 .set(payload, SetOptions.merge())
                 .await()
         } catch (e: Exception) {
@@ -310,6 +317,7 @@ class FirestoreSyncService(
     }
 
     suspend fun pushCustomer(customer: CustomerEntity) {
+        val fs = firestore ?: return
         val path = "customers/${customer.id}"
         val payload = hashMapOf<String, Any?>(
             "id" to customer.id,
@@ -319,7 +327,7 @@ class FirestoreSyncService(
             "updatedAt" to FieldValue.serverTimestamp()
         )
         try {
-            firestore.collection("customers").document(customer.id)
+            fs.collection("customers").document(customer.id)
                 .set(payload, SetOptions.merge())
                 .await()
         } catch (e: Exception) {
@@ -328,9 +336,10 @@ class FirestoreSyncService(
     }
 
     suspend fun pushMachineStock(machineId: String, availableQty: Int) {
+        val fs = firestore ?: return
         val path = "machines/$machineId"
         try {
-            firestore.collection("machines").document(machineId)
+            fs.collection("machines").document(machineId)
                 .update("availableQty", availableQty)
                 .await()
         } catch (e: Exception) {
@@ -339,6 +348,7 @@ class FirestoreSyncService(
     }
 
     suspend fun pushActivityLog(log: ActivityLogEntity) {
+        val fs = firestore ?: return
         val path = "activity_log/${log.id}"
         val payload = hashMapOf<String, Any?>(
             "id" to log.id,
@@ -351,7 +361,7 @@ class FirestoreSyncService(
             "serverTimestamp" to FieldValue.serverTimestamp()
         )
         try {
-            firestore.collection("activity_log").document(log.id)
+            fs.collection("activity_log").document(log.id)
                 .set(payload)
                 .await()
         } catch (e: Exception) {
@@ -360,9 +370,10 @@ class FirestoreSyncService(
     }
 
     suspend fun getStaffUser(uid: String): UserEntity? {
+        val fs = firestore ?: return null
         val path = "users/$uid"
         return try {
-            val doc = firestore.collection("users").document(uid).get().await()
+            val doc = fs.collection("users").document(uid).get().await()
             if (doc.exists()) {
                 val name = doc.getString("name") ?: "Staff"
                 val role = doc.getString("role") ?: "worker"
@@ -375,7 +386,8 @@ class FirestoreSyncService(
                     pin = "",
                     role = role,
                     isActive = active,
-                    maxDiscountAmount = maxDiscount
+                    maxDiscountAmount = maxDiscount,
+                    registeredPhone = doc.getString("registeredPhone") ?: "9876543210"
                 )
             } else null
         } catch (e: Exception) {
@@ -385,6 +397,7 @@ class FirestoreSyncService(
     }
 
     suspend fun saveStaffProfile(user: UserEntity) {
+        val fs = firestore ?: return
         val path = "users/${user.id}"
         val payload = hashMapOf<String, Any?>(
             "uid" to user.id,
@@ -393,10 +406,11 @@ class FirestoreSyncService(
             "role" to user.role,
             "active" to user.isActive,
             "maxDiscountAmount" to user.maxDiscountAmount,
+            "registeredPhone" to user.registeredPhone,
             "updatedAt" to FieldValue.serverTimestamp()
         )
         try {
-            firestore.collection("users").document(user.id)
+            fs.collection("users").document(user.id)
                 .set(payload, SetOptions.merge())
                 .await()
         } catch (e: Exception) {

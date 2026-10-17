@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.JobSheetEntity
+import com.example.data.model.SelectedMachineItem
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.components.AddExtraPaymentDialog
 import com.example.ui.components.PaymentHistoryDialog
@@ -92,6 +93,18 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                     onLoginSuccess = { user ->
                         viewModel.directLoginAs(user)
                         currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
+                    },
+                    onOwnerPinReset = { owner, newPin ->
+                        viewModel.changeOwnerPin(
+                            owner = owner,
+                            newPin = newPin,
+                            onSuccess = {
+                                Toast.makeText(context, "Owner PIN updated successfully! Login with your new PIN.", Toast.LENGTH_LONG).show()
+                            },
+                            onError = { err ->
+                                Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                            }
+                        )
                     }
                 )
             }
@@ -134,6 +147,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onNavigateToCustomers = { currentScreen = "customers" },
                         onNavigateToReports = { currentScreen = "reports" },
                         onNavigateToStaff = { currentScreen = "manage_staff" },
+                        onNavigateToStaffPerformance = { currentScreen = "staff_performance" },
                         onNavigateToActivityLog = { currentScreen = "activity_log" },
                         onReturnJobClick = { job ->
                             jobToReturn = job
@@ -157,13 +171,10 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         categories = categories,
                         machines = machines,
                         onFindCustomerByPhone = { phone -> viewModel.findCustomerByPhone(phone) },
-                        onCreateJobSheet = { customer, machine, categoryName, qty, rate, discount, deposit, method, cycle, checkoutUser, handledUser, notes, personPhoto, idPhoto, machinePhoto, dueTime, onSuccess, onError ->
+                        onCreateJobSheet = { customer, items, discount, deposit, method, cycle, checkoutUser, handledUser, notes, personPhoto, idPhoto, machinePhoto, dueTime, onSuccess, onError ->
                             viewModel.createJobSheet(
                                 customer = customer,
-                                machine = machine,
-                                categoryName = categoryName,
-                                quantity = qty,
-                                rateUsed = rate,
+                                items = items,
                                 discount = discount,
                                 depositAmount = deposit,
                                 depositMethod = method,
@@ -269,8 +280,8 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         currentUser = user,
                         allJobSheets = allJobSheets,
                         payments = payments,
-                        onExportCsv = {
-                            viewModel.exportReport(context)
+                        onExportCsv = { filteredList ->
+                            viewModel.exportReport(context, filteredList)
                         },
                         onNavigateBack = {
                             currentScreen = "owner_dashboard"
@@ -307,6 +318,30 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onUpdateDiscountFloor = { worker, amount ->
                             viewModel.updateWorkerDiscountFloor(worker, amount)
                         },
+                        onUpdateOwnerPhone = { owner, newPhone ->
+                            viewModel.updateOwnerRegisteredPhone(
+                                owner = owner,
+                                newPhone = newPhone,
+                                onSuccess = {
+                                    Toast.makeText(context, "Owner registered mobile updated successfully", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onUpdateOwnerPin = { owner, newPin ->
+                            viewModel.changeOwnerPin(
+                                owner = owner,
+                                newPin = newPin,
+                                onSuccess = {
+                                    Toast.makeText(context, "Owner PIN changed successfully! New PIN is now active.", Toast.LENGTH_LONG).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
                         onNavigateBack = {
                             currentScreen = "owner_dashboard"
                         }
@@ -322,17 +357,35 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                     }
                 )
             }
+
+            "staff_performance" -> {
+                StaffPerformanceScreen(
+                    users = users,
+                    allJobSheets = allJobSheets,
+                    payments = payments,
+                    activityLogs = activityLogs,
+                    onViewReceipt = { job -> jobForReceipt = job },
+                    onNavigateToManageStaff = { currentScreen = "manage_staff" },
+                    onNavigateBack = {
+                        currentScreen = "owner_dashboard"
+                    }
+                )
+            }
         }
 
         // Shared Return Dialog
-        if (jobToReturn != null && returnCalculation != null) {
+        if (jobToReturn != null) {
+            val jobPayments = payments.filter { it.jobSheetId == jobToReturn!!.id }
             ReturnJobDialog(
                 jobSheet = jobToReturn!!,
-                calculation = returnCalculation!!,
-                onConfirmReturn = { paymentMethod, remark ->
+                calculation = returnCalculation,
+                payments = jobPayments,
+                currentUser = currentUser,
+                onConfirmFullReturn = { _, discount, paymentMethod, remark ->
                     viewModel.returnJob(
                         jobSheetId = jobToReturn!!.id,
                         settlementMethod = paymentMethod,
+                        manualDiscount = discount,
                         remark = remark,
                         context = context,
                         onSuccess = { updated ->
@@ -340,6 +393,25 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                             returnCalculation = null
                             jobForReceipt = updated
                             Toast.makeText(context, "Job closed & machinery restored to stock", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                            Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                },
+                onConfirmPartialReturn = { returningQty, discount, paymentMethod, remark ->
+                    viewModel.returnPartialJob(
+                        jobSheetId = jobToReturn!!.id,
+                        returningQuantity = returningQty,
+                        settlementMethod = paymentMethod,
+                        manualDiscount = discount,
+                        remark = remark,
+                        context = context,
+                        onSuccess = { updated ->
+                            jobToReturn = null
+                            returnCalculation = null
+                            jobForReceipt = updated
+                            Toast.makeText(context, "Partial return completed: $returningQty units returned, remaining active", Toast.LENGTH_LONG).show()
                         },
                         onError = { err ->
                             Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
