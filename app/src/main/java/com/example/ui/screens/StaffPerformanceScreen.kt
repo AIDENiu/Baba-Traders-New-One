@@ -964,7 +964,7 @@ private fun DetailedStaffPerformanceCard(
                                                 color = BabaDark
                                             )
                                             Text(
-                                                text = "${job.machineName} • Qty: ${job.effectiveInitialQty} • Rate: ₹${job.rateUsed.toInt()}/day",
+                                                text = "${job.cleanMachineName} • Qty: ${job.effectiveInitialQty} • Rate: ₹${job.rateUsed.toInt()}/day",
                                                 fontSize = 11.sp,
                                                 color = BabaDark,
                                                 maxLines = 2,

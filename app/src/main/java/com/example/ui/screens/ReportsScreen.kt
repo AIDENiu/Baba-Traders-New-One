@@ -198,7 +198,7 @@ fun ReportsScreen(
 
     // Machine rental popularity in selected period
     val machineFrequencies = remember(filteredJobSheets) {
-        filteredJobSheets.groupBy { it.machineName }
+        filteredJobSheets.groupBy { it.cleanMachineName }
             .mapValues { it.value.sumOf { job -> job.quantity } }
             .toList()
             .sortedByDescending { it.second }
@@ -996,7 +996,7 @@ fun ReportsScreen(
                                     }
                                 }
                                 Text(
-                                    text = "${job.customerName} • ${job.machineName}",
+                                    text = "${job.customerName} • ${job.cleanMachineName}",
                                     fontSize = 12.sp,
                                     color = BabaDark,
                                     fontWeight = FontWeight.Medium

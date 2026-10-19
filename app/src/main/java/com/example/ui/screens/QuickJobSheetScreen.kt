@@ -105,32 +105,14 @@ fun QuickJobSheetScreen(
     }
 
     // Map of machineId -> SelectedMachineItem so users can pick machines across ANY categories
+    // Starts empty so only the exact machines selected by the user are included in calculations
     val selectedItemsMap = remember { mutableStateMapOf<String, SelectedMachineItem>() }
 
-    // Initialize with the first available machine if nothing selected yet and machines load for the first time
-    var didAutoInitSelection by remember { mutableStateOf(false) }
-    LaunchedEffect(machines, categories) {
-        if (!didAutoInitSelection && machines.isNotEmpty() && selectedItemsMap.isEmpty()) {
-            val firstAvail = machines.firstOrNull { it.availableQty > 0 } ?: machines.firstOrNull()
-            if (firstAvail != null) {
-                val catName = categories.firstOrNull { it.id == firstAvail.categoryId }?.name ?: "Hardware"
-                selectedItemsMap[firstAvail.id] = SelectedMachineItem(
-                    machineId = firstAvail.id,
-                    machineName = firstAvail.name,
-                    categoryId = firstAvail.categoryId,
-                    categoryName = catName,
-                    quantity = 1,
-                    rate = firstAvail.currentRate
-                )
-                didAutoInitSelection = true
-            }
-        }
-    }
-
+    val totalSelectedUnits = selectedItemsMap.values.sumOf { it.quantity }
     val combinedDailyRate = selectedItemsMap.values.sumOf { it.quantity * it.rate }
 
-    // 3. Rate, Discount & Billing Cycle State
-    var dailyRateText by remember { mutableStateOf("500") }
+    // 3. Rate, Rental Days, Discount & Billing Cycle State
+    var dailyRateText by remember { mutableStateOf("0") }
     LaunchedEffect(combinedDailyRate) {
         dailyRateText = if (combinedDailyRate % 1.0 == 0.0) {
             combinedDailyRate.toInt().toString()
@@ -138,9 +120,26 @@ fun QuickJobSheetScreen(
             combinedDailyRate.toString()
         }
     }
+    var rentalDays by remember { mutableStateOf(1) }
     var discountText by remember { mutableStateOf("0") }
     var billingCycle by remember { mutableStateOf("24hr") } // "24hr" or "working_hours"
     var dueTimeMillis by remember { mutableStateOf(System.currentTimeMillis() + (24 * 60 * 60 * 1000L)) }
+
+    fun updateDueTimeForDays(days: Int, cycle: String) {
+        val safeDays = days.coerceAtLeast(1)
+        rentalDays = safeDays
+        dueTimeMillis = if (cycle == "working_hours") {
+            Calendar.getInstance().apply {
+                add(Calendar.DAY_OF_MONTH, safeDays)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        } else {
+            System.currentTimeMillis() + (safeDays * 24 * 60 * 60 * 1000L)
+        }
+    }
 
     // 4. Security Deposit & ID Photo State (matches screenshot)
     var depositText by remember { mutableStateOf("500") }
@@ -323,7 +322,11 @@ fun QuickJobSheetScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .size(24.dp)
@@ -341,12 +344,15 @@ fun QuickJobSheetScreen(
                         }
 
                         if (isReturningCustomer) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(shape = RoundedCornerShape(10.dp), color = BabaSuccessLight) {
                                 Text(
                                     text = "RETURNING CUSTOMER",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BabaSuccess,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
@@ -406,49 +412,29 @@ fun QuickJobSheetScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(BabaRed, CircleShape),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .background(BabaRed, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("2", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            }
-                            Column {
-                                Text(
-                                    text = "Select Machine & Category",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = BabaDark
-                                )
-                                Text(
-                                    text = "Switch categories to add multiple machines to one order",
-                                    fontSize = 10.5.sp,
-                                    color = BabaGray
-                                )
-                            }
+                            Text("2", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
-
-                        if (selectedItemsMap.isNotEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = BabaRedLight
-                            ) {
-                                Text(
-                                    text = "${selectedItemsMap.values.sumOf { it.quantity }} Selected",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BabaRed,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Select Machine & Category",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = BabaDark
+                            )
+                            Text(
+                                text = "Switch categories to add multiple machines to one order",
+                                fontSize = 10.5.sp,
+                                color = BabaGray
+                            )
                         }
                     }
 
@@ -615,7 +601,7 @@ fun QuickJobSheetScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                                 Text(
                                                     text = "Quantity to Rent",
                                                     fontWeight = FontWeight.Bold,
@@ -713,17 +699,32 @@ fun QuickJobSheetScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "Selected Items Across Categories (${selectedItemsMap.size})",
+                                        text = "Selected Machines ($totalSelectedUnits unit(s) in ${selectedItemsMap.size} item(s))",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = BabaDark
+                                        color = BabaDark,
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
                                     )
-                                    Text(
-                                        text = "Total: ₹${combinedDailyRate.toInt()}/day",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Black,
-                                        color = BabaRed
-                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = "1 Day: ₹${combinedDailyRate.toInt()}/day",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = BabaRed,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        if (rentalDays > 1) {
+                                            Text(
+                                                text = "$rentalDays Days: ₹${(combinedDailyRate * rentalDays).toInt()}",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BabaSuccess,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 selectedItemsMap.values.forEach { item ->
@@ -743,7 +744,7 @@ fun QuickJobSheetScreen(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = "${item.quantity}x ${item.machineName}",
+                                                    text = item.machineName,
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = BabaDark
@@ -758,12 +759,22 @@ fun QuickJobSheetScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                Text(
-                                                    text = "₹${(item.quantity * item.rate).toInt()}",
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BabaDark
-                                                )
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(
+                                                        text = "₹${(item.quantity * item.rate).toInt()}/day",
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = BabaDark
+                                                    )
+                                                    if (rentalDays > 1) {
+                                                        Text(
+                                                            text = "₹${(item.quantity * item.rate * rentalDays).toInt()} ($rentalDays d)",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = BabaSuccess
+                                                        )
+                                                    }
+                                                }
                                                 IconButton(
                                                     onClick = { selectedItemsMap.remove(item.machineId) },
                                                     modifier = Modifier.size(24.dp)
@@ -785,7 +796,14 @@ fun QuickJobSheetScreen(
                 }
             }
 
-            // STEP 3: Rate, Discount & Billing Cycle (Matches screenshot)
+            // STEP 3: Rate, Discount & Billing Cycle
+            val effectiveDailyRate = dailyRateText.toDoubleOrNull() ?: combinedDailyRate
+            val discountVal = discountText.toDoubleOrNull() ?: 0.0
+            val depositVal = depositText.toDoubleOrNull() ?: 0.0
+            val grossRentForPeriod = effectiveDailyRate * rentalDays
+            val netRentForPeriod = maxOf(0.0, grossRentForPeriod - discountVal)
+            val estBalanceOnReturn = netRentForPeriod - depositVal
+
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -814,7 +832,7 @@ fun QuickJobSheetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Daily Rate (₹) and Discount (₹) side by side
+                    // Combined Daily Rate (₹/day) and Discount (₹) side by side
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -824,15 +842,32 @@ fun QuickJobSheetScreen(
                             onValueChange = { newRateStr ->
                                 dailyRateText = newRateStr
                                 val parsed = newRateStr.toDoubleOrNull()
-                                if (parsed != null && selectedItemsMap.size == 1) {
-                                    val onlyKey = selectedItemsMap.keys.first()
-                                    val onlyItem = selectedItemsMap[onlyKey]
-                                    if (onlyItem != null && onlyItem.quantity > 0) {
-                                        selectedItemsMap[onlyKey] = onlyItem.copy(rate = parsed / onlyItem.quantity)
+                                if (parsed != null && selectedItemsMap.isNotEmpty()) {
+                                    if (selectedItemsMap.size == 1) {
+                                        val onlyKey = selectedItemsMap.keys.first()
+                                        val onlyItem = selectedItemsMap[onlyKey]
+                                        if (onlyItem != null && onlyItem.quantity > 0) {
+                                            selectedItemsMap[onlyKey] = onlyItem.copy(rate = parsed / onlyItem.quantity)
+                                        }
+                                    } else if (combinedDailyRate > 0) {
+                                        val ratio = parsed / combinedDailyRate
+                                        selectedItemsMap.keys.toList().forEach { key ->
+                                            val item = selectedItemsMap[key]
+                                            if (item != null) {
+                                                selectedItemsMap[key] = item.copy(rate = item.rate * ratio)
+                                            }
+                                        }
                                     }
                                 }
                             },
-                            label = { Text("Total Daily Rate (₹)") },
+                            label = { Text("Combined Daily Rate (₹/day)") },
+                            supportingText = {
+                                Text(
+                                    text = if (totalSelectedUnits > 0) "For $totalSelectedUnits selected machine(s) per day" else "Select machines in Step 2",
+                                    color = BabaGray,
+                                    fontSize = 9.sp
+                                )
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = babaTextFieldColors(),
                             textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
@@ -850,11 +885,136 @@ fun QuickJobSheetScreen(
                             supportingText = {
                                 if (currentUser.role == "worker") {
                                     Text("Worker limit: ₹${currentUser.maxDiscountAmount.toInt()}", color = BabaGray, fontSize = 9.sp)
+                                } else {
+                                    Text("Deducted from total rent", color = BabaGray, fontSize = 9.sp)
                                 }
                             },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(10.dp)
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Rental Duration (Days) Selector
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BabaYellowLight.copy(alpha = 0.45f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BabaYellowDark.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                    Text(
+                                        text = "Rental Duration (Number of Days)",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaDark
+                                    )
+                                    Text(
+                                        text = "₹${effectiveDailyRate.toInt()}/day × $rentalDays day(s) = ₹${grossRentForPeriod.toInt()}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaRed
+                                    )
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.White,
+                                        border = androidx.compose.foundation.BorderStroke(1.5.dp, BabaRed),
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                if (rentalDays > 1) {
+                                                    updateDueTimeForDays(rentalDays - 1, billingCycle)
+                                                }
+                                            }
+                                            .testTag("decrease_rental_days")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Remove, contentDescription = "-1 Day", tint = BabaRed, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+
+                                    Text(
+                                        text = "$rentalDays ${if (rentalDays == 1) "Day" else "Days"}",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaDark,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 4.dp)
+                                    )
+
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.White,
+                                        border = androidx.compose.foundation.BorderStroke(1.5.dp, BabaRed),
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                updateDueTimeForDays(rentalDays + 1, billingCycle)
+                                            }
+                                            .testTag("increase_rental_days")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Add, contentDescription = "+1 Day", tint = BabaRed, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Quick day chips: 1 Day, 2 Days, 3 Days, 5 Days, 7 Days
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(1, 2, 3, 5, 7).forEach { d ->
+                                    val isDaySelected = rentalDays == d
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isDaySelected) BabaRed else Color.White,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isDaySelected) BabaRed else BabaBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                updateDueTimeForDays(d, billingCycle)
+                                            }
+                                            .testTag("rental_days_chip_$d")
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "${d}d",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isDaySelected) Color.White else BabaDark
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -879,14 +1039,14 @@ fun QuickJobSheetScreen(
                                 )
                                 .clickable {
                                     billingCycle = "24hr"
-                                    dueTimeMillis = System.currentTimeMillis() + (24 * 60 * 60 * 1000L)
+                                    updateDueTimeForDays(rentalDays, "24hr")
                                 },
                             color = if (billingCycle == "24hr") Color(0xFFFFF0F0) else Color.White
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text("24-Hour Cycle", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text("Due exactly +24 hours from checkout", fontSize = 10.5.sp, color = BabaGray)
+                                Text("Due +${rentalDays * 24} hours from checkout", fontSize = 10.5.sp, color = BabaGray)
                             }
                         }
 
@@ -902,13 +1062,7 @@ fun QuickJobSheetScreen(
                                 )
                                 .clickable {
                                     billingCycle = "working_hours"
-                                    dueTimeMillis = Calendar.getInstance().apply {
-                                        add(Calendar.DAY_OF_MONTH, 1)
-                                        set(Calendar.HOUR_OF_DAY, 0)
-                                        set(Calendar.MINUTE, 0)
-                                        set(Calendar.SECOND, 0)
-                                        set(Calendar.MILLISECOND, 0)
-                                    }.timeInMillis
+                                    updateDueTimeForDays(rentalDays, "working_hours")
                                 },
                             color = if (billingCycle == "working_hours") Color(0xFFFFF0F0) else Color.White
                         ) {
@@ -931,32 +1085,184 @@ fun QuickJobSheetScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.weight(1f).padding(end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 Icon(Icons.Default.Event, contentDescription = null, tint = BabaRed, modifier = Modifier.size(16.dp))
-                                Column {
-                                    Text("Due Date: ${dateFormat.format(Date(dueTimeMillis))}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Due Date ($rentalDays Day(s)): ${dateFormat.format(Date(dueTimeMillis))}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaDark)
                                     Text("Alarms notify 2 hours prior to due return", fontSize = 9.5.sp, color = BabaGray)
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                 IconButton(
                                     onClick = {
-                                        val dayMs = 24 * 3600 * 1000L
-                                        if (dueTimeMillis - dayMs > System.currentTimeMillis()) dueTimeMillis -= dayMs
+                                        if (rentalDays > 1) {
+                                            updateDueTimeForDays(rentalDays - 1, billingCycle)
+                                        }
                                     },
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(Icons.Default.Remove, contentDescription = "-1d", modifier = Modifier.size(14.dp))
                                 }
                                 IconButton(
-                                    onClick = { dueTimeMillis += 24 * 3600 * 1000L },
+                                    onClick = {
+                                        updateDueTimeForDays(rentalDays + 1, billingCycle)
+                                    },
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "+1d", modifier = Modifier.size(14.dp), tint = BabaRed)
+                                }
+                            }
+                        }
+                    }
+
+                    // Live Rental Calculation Breakdown Card
+                    if (selectedItemsMap.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = BabaLightGray,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    text = "RENTAL CALCULATION BREAKDOWN",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BabaRed
+                                )
+                                selectedItemsMap.values.forEach { item ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${item.machineName} (₹${item.rate.toInt()}/day)",
+                                            fontSize = 11.sp,
+                                            color = BabaGray,
+                                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                        )
+                                        Text(
+                                            text = "₹${(item.quantity * item.rate).toInt()}/day",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BabaDark,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                                HorizontalDivider(color = BabaBorder)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Combined Daily Rate ($totalSelectedUnits machine(s))",
+                                        fontSize = 11.5.sp,
+                                        color = BabaDark,
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = "₹${effectiveDailyRate.toInt()} / day",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaDark,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Gross Rent ($rentalDays day(s) × ₹${effectiveDailyRate.toInt()}/day)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaDark,
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = "₹${grossRentForPeriod.toInt()}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaDark,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                                if (discountVal > 0) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Discount Applied", fontSize = 11.5.sp, color = BabaRed, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                        Text("- ₹${discountVal.toInt()}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = BabaRed, maxLines = 1, softWrap = false)
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Total Net Rent ($rentalDays day(s))",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaRed,
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = "₹${netRentForPeriod.toInt()}",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaRed,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Advance / Security Deposit Paid", fontSize = 11.sp, color = BabaGray, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                    Text("₹${depositVal.toInt()}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaSuccess, maxLines = 1, softWrap = false)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Est. Balance at Return", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = BabaDark, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                    Text(
+                                        text = when {
+                                            estBalanceOnReturn > 0 -> "₹${estBalanceOnReturn.toInt()} Payable"
+                                            estBalanceOnReturn < 0 -> "₹${kotlin.math.abs(estBalanceOnReturn).toInt()} Refund"
+                                            else -> "₹0 (Covered by Deposit)"
+                                        },
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (estBalanceOnReturn > 0) BabaOverdue else BabaSuccess,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
                                 }
                             }
                         }
@@ -1188,6 +1494,7 @@ fun QuickJobSheetScreen(
                     }
 
                     val itemsList = selectedItemsMap.values.toList()
+                    val exactDueTimeMillis = System.currentTimeMillis() + (rentalDays.coerceAtLeast(1) * 24 * 60 * 60 * 1000L)
 
                     val customer = CustomerEntity(
                         id = "cust_" + (cleanPhone.ifEmpty { UUID.randomUUID().toString() }),
@@ -1211,7 +1518,7 @@ fun QuickJobSheetScreen(
                         personPhotoPath,
                         idPhotoFrontPath ?: idPhotoBackPath,
                         machinePhotoPath,
-                        dueTimeMillis,
+                        exactDueTimeMillis,
                         { createdJob ->
                             createdJobSheetForReceipt = createdJob
                         },

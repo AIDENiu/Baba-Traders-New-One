@@ -151,6 +151,8 @@ data class JobSheetEntity(
 ) : Serializable {
     val effectiveInitialQty: Int get() = if (initialQuantity > 0) initialQuantity else quantity
     val remainingActiveQty: Int get() = effectiveInitialQty - returnedQuantity
+    val cleanMachineName: String
+        get() = machineName.replace(Regex("""\b\d+\s*x\s+""", RegexOption.IGNORE_CASE), "").trim()
 }
 
 @Entity(tableName = "activity_log")

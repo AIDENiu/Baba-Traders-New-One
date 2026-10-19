@@ -123,22 +123,11 @@ fun AuthScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Stylized Emblem
-                    Surface(
-                        modifier = Modifier.size(68.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color.White,
-                        tonalElevation = 6.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "B",
-                                fontSize = 38.sp,
-                                fontWeight = FontWeight.Black,
-                                color = BabaRed
-                            )
-                        }
-                    }
+                    // Stylized Emblem (BABA Red & Yellow B with Claw Hammer Logo)
+                    com.example.ui.components.BabaLogoIcon(
+                        size = 76.dp,
+                        cornerRadius = 18.dp
+                    )
 
                     Text(
                         text = "BABA TRADERS",

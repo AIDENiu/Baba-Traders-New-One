@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,13 +17,40 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.UserEntity
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.OwnerAlertNotification
+
+@Composable
+fun BabaLogoIcon(
+    size: Dp = 42.dp,
+    cornerRadius: Dp = 10.dp,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(size),
+        shape = RoundedCornerShape(cornerRadius),
+        color = Color.Black,
+        shadowElevation = 2.dp
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.baba_logo_img),
+            contentDescription = "BABA Traders Logo",
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(cornerRadius)),
+            contentScale = ContentScale.Crop
+        )
+    }
+}
 
 @Composable
 fun BabaBrandTopBar(
@@ -49,30 +77,7 @@ fun BabaBrandTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Stylized BABA icon mark
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White)
-                        .padding(4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(BabaRed),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "B",
-                            color = BabaYellow,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 22.sp
-                        )
-                    }
-                }
+                BabaLogoIcon(size = 42.dp, cornerRadius = 10.dp)
 
                 Column {
                     Row(

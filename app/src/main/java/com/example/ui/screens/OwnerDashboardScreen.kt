@@ -441,7 +441,7 @@ fun OwnerDashboardScreen(
                                     ) {
                                         Column {
                                             Text(
-                                                text = "${job.customerName} • ${job.machineName}",
+                                                text = "${job.customerName} • ${job.cleanMachineName}",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
                                                 color = BabaDark
@@ -459,7 +459,9 @@ fun OwnerDashboardScreen(
                                             shape = RoundedCornerShape(6.dp),
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                         ) {
-                                            Text("Return", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Icon(Icons.Default.Check, contentDescription = "Invoice", modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Invoice", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }

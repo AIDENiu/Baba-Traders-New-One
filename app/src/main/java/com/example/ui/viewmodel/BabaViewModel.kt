@@ -387,9 +387,10 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
     fun calculateReturnBill(
         jobSheet: JobSheetEntity,
         returningQuantity: Int = jobSheet.remainingActiveQty,
-        manualDiscount: Double = 0.0
+        manualDiscount: Double = 0.0,
+        overrideDaysUsed: Int? = null
     ): ReturnCalculation {
-        return repository.calculateReturnBill(jobSheet, returningQuantity, manualDiscount)
+        return repository.calculateReturnBill(jobSheet, returningQuantity, manualDiscount, overrideDaysUsed = overrideDaysUsed)
     }
 
     fun returnJob(
@@ -398,6 +399,7 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         manualDiscount: Double = 0.0,
         remark: String = "",
         context: Context? = null,
+        overrideDaysUsed: Int? = null,
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -410,7 +412,8 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                     currentUser = user,
                     manualDiscount = manualDiscount,
                     remark = remark,
-                    context = context
+                    context = context,
+                    overrideDaysUsed = overrideDaysUsed
                 )
                 if (updated != null) {
                     onSuccess(updated)
@@ -430,6 +433,7 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         manualDiscount: Double = 0.0,
         remark: String = "",
         context: Context? = null,
+        overrideDaysUsed: Int? = null,
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -443,7 +447,8 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                     currentUser = user,
                     manualDiscount = manualDiscount,
                     remark = remark,
-                    context = context
+                    context = context,
+                    overrideDaysUsed = overrideDaysUsed
                 )
                 if (updated != null) {
                     onSuccess(updated)

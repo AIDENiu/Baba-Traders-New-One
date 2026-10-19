@@ -271,10 +271,11 @@ fun OrderCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            val baseMachineLabel = jobSheet.cleanMachineName
             val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
-                "${jobSheet.remainingActiveQty}x ${jobSheet.machineName} (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
             } else {
-                "${jobSheet.quantity}x ${jobSheet.machineName}"
+                baseMachineLabel
             }
 
             Text(
@@ -282,6 +283,15 @@ fun OrderCard(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = BabaDark
+            )
+
+            val bookedDays = com.example.data.repository.BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+            val estTotalRent = maxOf(0.0, (bookedDays * jobSheet.rateUsed) - jobSheet.discount)
+            Text(
+                text = "Rate: ₹${jobSheet.rateUsed.toInt()}/day • $bookedDays day(s) = ₹${estTotalRent.toInt()}",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = BabaRed
             )
 
             Text(
@@ -330,13 +340,13 @@ fun OrderCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Due: ${dateFormat.format(Date(jobSheet.dueTime))}",
+                    text = "Due ($bookedDays d): ${dateFormat.format(Date(jobSheet.dueTime))}",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (isOverdue && !isJobClosed) BabaOverdue else BabaGray
                 )
                 Text(
-                    text = if (isJobClosed) "Deposit Settled" else "Deposit: ₹${jobSheet.depositAmount}",
+                    text = if (isJobClosed) "Deposit Settled" else "Deposit: ₹${jobSheet.depositAmount.toInt()}",
                     fontSize = 11.sp,
                     color = BabaSuccess,
                     fontWeight = FontWeight.Bold
@@ -380,9 +390,9 @@ fun OrderCard(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.testTag("order_return_${jobSheet.id}")
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = "Return", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = "Invoice", modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Return", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Invoice", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Button(

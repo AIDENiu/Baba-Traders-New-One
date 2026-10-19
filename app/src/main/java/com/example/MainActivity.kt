@@ -381,13 +381,14 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                 calculation = returnCalculation,
                 payments = jobPayments,
                 currentUser = currentUser,
-                onConfirmFullReturn = { _, discount, paymentMethod, remark ->
+                onConfirmFullReturn = { _, discount, paymentMethod, remark, daysUsed ->
                     viewModel.returnJob(
                         jobSheetId = jobToReturn!!.id,
                         settlementMethod = paymentMethod,
                         manualDiscount = discount,
                         remark = remark,
                         context = context,
+                        overrideDaysUsed = daysUsed,
                         onSuccess = { updated ->
                             jobToReturn = null
                             returnCalculation = null
@@ -399,7 +400,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         }
                     )
                 },
-                onConfirmPartialReturn = { returningQty, discount, paymentMethod, remark ->
+                onConfirmPartialReturn = { returningQty, discount, paymentMethod, remark, daysUsed ->
                     viewModel.returnPartialJob(
                         jobSheetId = jobToReturn!!.id,
                         returningQuantity = returningQty,
@@ -407,6 +408,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         manualDiscount = discount,
                         remark = remark,
                         context = context,
+                        overrideDaysUsed = daysUsed,
                         onSuccess = { updated ->
                             jobToReturn = null
                             returnCalculation = null

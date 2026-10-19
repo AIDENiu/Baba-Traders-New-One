@@ -31,7 +31,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.SelectedMachineItem
 import com.example.data.model.UserEntity
+import com.example.data.repository.BabaRepository
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.theme.*
 import com.example.util.PdfGenerator
@@ -63,20 +65,8 @@ fun ReceiptDialog(
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Receipt Header
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(BabaRed, RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                        contentDescription = "Receipt",
-                        tint = BabaYellow,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                // Receipt Header with BABA Logo
+                BabaLogoIcon(size = 52.dp, cornerRadius = 12.dp)
 
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
@@ -171,10 +161,28 @@ fun ReceiptDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Item Details Table
+                val rentedItems = remember(jobSheet.itemsJson) {
+                    SelectedMachineItem.listFromJson(jobSheet.itemsJson)
+                }
+                val bookedDays = remember(jobSheet.checkoutTime, jobSheet.dueTime) {
+                    BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+                }
+                val estimatedGrossRent = bookedDays * jobSheet.rateUsed
+                val estimatedNetRent = maxOf(0.0, estimatedGrossRent - jobSheet.discount)
+
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    ReceiptRow("Machine / Equipment", jobSheet.machineName, isBold = true)
-                    ReceiptRow("Quantity Rented", "${jobSheet.quantity} unit(s)")
-                    ReceiptRow("Daily Rate", "₹${jobSheet.rateUsed}/day")
+                    ReceiptRow("Machine / Equipment", jobSheet.cleanMachineName, isBold = true)
+                    if (rentedItems.size > 1) {
+                        rentedItems.forEach { item ->
+                            ReceiptRow(
+                                "  • ${item.machineName}",
+                                "₹${(item.quantity * item.rate).toInt()}/day"
+                            )
+                        }
+                    }
+                    ReceiptRow("Total Units Rented", "${jobSheet.effectiveInitialQty} machine(s)")
+                    ReceiptRow("Combined Daily Rate", "₹${jobSheet.rateUsed.toInt()}/day", isBold = true)
+                    ReceiptRow("Booked Duration", "$bookedDays day(s)", isBold = true)
                     ReceiptRow("Billing Cycle", if (jobSheet.billingCycle == "24hr") "24-Hour Cycle" else "1 Day operation")
                     ReceiptRow("Checked Out", dateFormat.format(Date(jobSheet.checkoutTime)))
                     ReceiptRow("Due Date & Time", dateFormat.format(Date(jobSheet.dueTime)))
@@ -182,7 +190,13 @@ fun ReceiptDialog(
                         ReceiptRow("Returned At", dateFormat.format(Date(jobSheet.returnTime)))
                     }
                     ReceiptRow("Payment Mode", jobSheet.paymentMode.uppercase(), isBold = true)
-                    ReceiptRow("Discount Price", "₹${jobSheet.discount}", textColor = if (jobSheet.discount > 0) BabaRed else BabaDark)
+                    ReceiptRow(
+                        "Gross Rent ($bookedDays day(s) × ₹${jobSheet.rateUsed.toInt()}/day)",
+                        "₹${estimatedGrossRent.toInt()}",
+                        isBold = true
+                    )
+                    ReceiptRow("Discount Price", "₹${jobSheet.discount.toInt()}", textColor = if (jobSheet.discount > 0) BabaRed else BabaDark)
+                    ReceiptRow("Net Rent ($bookedDays day(s))", "₹${estimatedNetRent.toInt()}", isBold = true, textColor = BabaRed)
                     ReceiptRow("Created By (User ID)", "${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }} (ID: ${jobSheet.checkoutBy.ifEmpty { jobSheet.handledBy }})")
                     ReceiptRow(
                         "Closed By (User ID)",
@@ -192,7 +206,21 @@ fun ReceiptDialog(
                             "Open (Pending Return)"
                         }
                     )
-                    ReceiptRow("Security Deposit / Advance", "₹${jobSheet.depositAmount}", textColor = BabaSuccess)
+                    ReceiptRow("Security Deposit / Advance", "₹${jobSheet.depositAmount.toInt()}", textColor = BabaSuccess, isBold = true)
+
+                    if (jobSheet.status != "returned" && jobSheet.status != "closed") {
+                        val estBalance = estimatedNetRent - jobSheet.depositAmount
+                        ReceiptRow(
+                            "Est. Balance on Return",
+                            when {
+                                estBalance > 0 -> "₹${estBalance.toInt()} Payable"
+                                estBalance < 0 -> "₹${abs(estBalance).toInt()} Refund"
+                                else -> "₹0 (Covered by Deposit)"
+                            },
+                            textColor = if (estBalance > 0) BabaOverdue else BabaSuccess,
+                            isBold = true
+                        )
+                    }
 
                     if (jobSheet.lateFee > 0) {
                         ReceiptRow("Late Fee Charged", "+ ₹${jobSheet.lateFee}", textColor = BabaOverdue, isBold = true)
@@ -200,13 +228,13 @@ fun ReceiptDialog(
 
                     if (jobSheet.status == "returned" || jobSheet.status == "closed") {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = BabaBorder)
-                        ReceiptRow("Total Rental Fee", "₹${jobSheet.totalRentalFee}", isBold = true)
+                        ReceiptRow("Final Settled Rental Fee", "₹${jobSheet.totalRentalFee.toInt()}", isBold = true)
                         if (jobSheet.returnRemark.contains("no work done", ignoreCase = true)) {
                             ReceiptRow("Settlement", "No Work Done (NIL)", textColor = BabaSuccess, isBold = true)
                         } else if (jobSheet.finalSettlement > 0) {
-                            ReceiptRow("Balance Collected", "₹${jobSheet.finalSettlement}", textColor = BabaRed, isBold = true)
+                            ReceiptRow("Balance Collected", "₹${jobSheet.finalSettlement.toInt()}", textColor = BabaRed, isBold = true)
                         } else if (jobSheet.finalSettlement < 0) {
-                            ReceiptRow("Refund Returned", "₹${abs(jobSheet.finalSettlement)}", textColor = BabaSuccess, isBold = true)
+                            ReceiptRow("Refund Returned", "₹${abs(jobSheet.finalSettlement).toInt()}", textColor = BabaSuccess, isBold = true)
                         } else {
                             ReceiptRow("Settlement", "Fully Settled", textColor = BabaSuccess, isBold = true)
                         }
@@ -313,32 +341,44 @@ private fun ReceiptRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
     ) {
-        Text(text = label, fontSize = 12.sp, color = BabaGray)
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = BabaGray,
+            modifier = Modifier.padding(end = 12.dp)
+        )
         Text(
             text = value,
             fontSize = 12.sp,
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
-            color = textColor
+            color = textColor,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
         )
     }
 }
 
 private fun shareReceiptText(context: Context, jobSheet: JobSheetEntity) {
     val dateFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
+    val bookedDays = BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+    val estTotalRent = maxOf(0.0, (bookedDays * jobSheet.rateUsed) - jobSheet.discount)
     val text = """
         *BABA TRADERS & Engineering Hardwares*
         *Machinery Rental Receipt: ${jobSheet.id}*
         ----------------------------------
         Customer: ${jobSheet.customerName} (${jobSheet.customerPhone})
-        Machine: ${jobSheet.machineName}
-        Quantity: ${jobSheet.quantity}
-        Daily Rate: ₹${jobSheet.rateUsed}
+        Machines: ${jobSheet.cleanMachineName}
+        Total Units: ${jobSheet.effectiveInitialQty}
+        Combined Daily Rate: ₹${jobSheet.rateUsed.toInt()}/day
+        Booked Duration: $bookedDays day(s)
+        Estimated Rent ($bookedDays day(s)): ₹${estTotalRent.toInt()}
         Billing Cycle: ${if (jobSheet.billingCycle == "24hr") "24-Hour Cycle" else "1 Day operation"}
         Checked Out: ${dateFormat.format(Date(jobSheet.checkoutTime))}
         Due Time: ${dateFormat.format(Date(jobSheet.dueTime))}
-        Deposit Paid: ₹${jobSheet.depositAmount}
+        Deposit Paid: ₹${jobSheet.depositAmount.toInt()}
         Checkout By: ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}
         Handled By: ${jobSheet.handledByName}
         Status: ${jobSheet.status.uppercase()}
@@ -363,11 +403,12 @@ fun ReturnJobDialog(
     payments: List<PaymentEntity> = emptyList(),
     currentUser: UserEntity? = null,
     onConfirmReturn: (paymentMethod: String, remark: String) -> Unit = { _, _ -> },
-    onConfirmFullReturn: (returningQty: Int, discount: Double, paymentMethod: String, remark: String) -> Unit = { _, _, m, r -> onConfirmReturn(m, r) },
-    onConfirmPartialReturn: (returningQty: Int, discount: Double, paymentMethod: String, remark: String) -> Unit = { _, _, m, r -> onConfirmReturn(m, r) },
+    onConfirmFullReturn: (returningQty: Int, discount: Double, paymentMethod: String, remark: String, daysUsed: Int) -> Unit = { _, _, m, r, _ -> onConfirmReturn(m, r) },
+    onConfirmPartialReturn: (returningQty: Int, discount: Double, paymentMethod: String, remark: String, daysUsed: Int) -> Unit = { _, _, m, r, _ -> onConfirmReturn(m, r) },
     onDismiss: () -> Unit
 ) {
     val activeUnits = jobSheet.remainingActiveQty.coerceAtLeast(1)
+    val initialUnits = jobSheet.effectiveInitialQty.coerceAtLeast(1)
     var returningQuantity by remember { mutableStateOf(activeUnits) }
     var discountInput by remember { mutableStateOf("") }
     var selectedMethod by remember { mutableStateOf("cash") }
@@ -378,28 +419,43 @@ fun ReturnJobDialog(
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
     val now = remember { System.currentTimeMillis() }
 
-    // Automatic Days Used calculation (Rolling 24-hour cycle)
-    val totalMsPerDay = 24 * 3600 * 1000.0
-    val durationMs = maxOf(0L, now - jobSheet.checkoutTime)
-    val daysUsed = kotlin.math.ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+    // Default Days Used: max of elapsed 24hr cycles and booked rental days on the job sheet,
+    // plus staff can adjust with - / + if the customer returned early or extended.
+    val elapsedDays = remember(jobSheet.checkoutTime) {
+        BabaRepository.calculateDaysUsed(jobSheet.checkoutTime, now)
+    }
+    val bookedDays = remember(jobSheet.checkoutTime, jobSheet.dueTime) {
+        BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+    }
+    var daysUsed by remember(jobSheet.id) {
+        mutableStateOf(maxOf(elapsedDays, bookedDays).coerceAtLeast(1))
+    }
 
     val manualDiscount = discountInput.toDoubleOrNull() ?: 0.0
     val isNoWorkDone = selectedMethod == "no_work_done"
 
-    // Formula: (Days Used × Daily Rate) - Initial Advance Deposit - Manual Discount
-    val grossRentalFee = daysUsed * jobSheet.rateUsed * returningQuantity
-    val proratedInitialDiscount = if (jobSheet.effectiveInitialQty > 0) {
-        (jobSheet.discount * returningQuantity) / jobSheet.effectiveInitialQty
+    // jobSheet.rateUsed is ALREADY the combined daily rate for all initialUnits machines!
+    // Never multiply jobSheet.rateUsed by returningQuantity a second time!
+    val dailyRateForReturning = if (returningQuantity >= initialUnits) {
+        jobSheet.rateUsed
+    } else {
+        (jobSheet.rateUsed * returningQuantity.toDouble()) / initialUnits.toDouble()
+    }
+
+    // Formula: (Days Used × Combined Daily Rate for Returning Machines) - Discount - Deposit Allocated
+    val grossRentalFee = daysUsed * dailyRateForReturning
+    val proratedInitialDiscount = if (initialUnits > 0) {
+        (jobSheet.discount * returningQuantity) / initialUnits
     } else {
         jobSheet.discount
     }
     val totalDiscount = proratedInitialDiscount + manualDiscount
     val netRentalFee = if (isNoWorkDone) 0.0 else maxOf(0.0, grossRentalFee - totalDiscount)
 
-    val depositAllocated = if (jobSheet.remainingActiveQty > 0) {
-        (jobSheet.depositAmount * returningQuantity) / jobSheet.remainingActiveQty
-    } else {
+    val depositAllocated = if (returningQuantity >= activeUnits) {
         jobSheet.depositAmount
+    } else {
+        (jobSheet.depositAmount * returningQuantity) / activeUnits
     }
 
     val finalPayable = if (isNoWorkDone) -depositAllocated else (netRentalFee - depositAllocated)
@@ -433,14 +489,14 @@ fun ReturnJobDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Return",
+                            contentDescription = "Invoice",
                             tint = BabaSuccess,
                             modifier = Modifier.size(22.dp)
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (isPartialReturn) "Partial Machine Return" else "Close Job Sheet & Return",
+                            text = if (isPartialReturn) "Partial Return & Invoice" else "Close Job Sheet & Invoice",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             color = BabaDark
@@ -619,58 +675,134 @@ fun ReturnJobDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Rental Machine", fontSize = 12.sp, color = BabaGray)
-                            Text("$returningQuantity x ${jobSheet.machineName}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaDark)
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Daily Rate", fontSize = 12.sp, color = BabaGray)
-                            Text("₹${jobSheet.rateUsed} / day", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BabaDark)
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Days Used (Rolling 24hr)", fontSize = 12.sp, color = BabaGray)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text("Rental Machines", fontSize = 12.sp, color = BabaGray, modifier = Modifier.padding(end = 12.dp))
                             Text(
-                                text = "$daysUsed day(s)",
+                                text = jobSheet.cleanMachineName,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = BabaDark
+                                color = BabaDark,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f)
                             )
                         }
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "Gross Rent ($daysUsed days x ₹${jobSheet.rateUsed} x $returningQuantity)",
+                                text = if (isPartialReturn) "Daily Rate ($returningQuantity of $initialUnits units)" else "Combined Daily Rate ($returningQuantity machine(s))",
                                 fontSize = 12.sp,
-                                color = BabaGray
+                                color = BabaGray,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
                             )
                             Text(
-                                text = if (isNoWorkDone) "₹0.0 (Waived)" else "₹$grossRentalFee",
+                                text = "₹${dailyRateForReturning.toInt()} / day",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BabaDark,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text("Rental Duration (Days)", fontSize = 12.sp, color = BabaGray)
+                                Text(
+                                    text = "Booked: $bookedDays day(s) • Elapsed: $elapsedDays day(s)",
+                                    fontSize = 10.sp,
+                                    color = BabaGray
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                FilledTonalIconButton(
+                                    onClick = { if (daysUsed > 1) daysUsed-- },
+                                    enabled = daysUsed > 1,
+                                    modifier = Modifier.size(28.dp).testTag("decrease_days_used")
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Decrease Days", modifier = Modifier.size(14.dp))
+                                }
+                                Text(
+                                    text = "$daysUsed day(s)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BabaDark,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                FilledTonalIconButton(
+                                    onClick = { daysUsed++ },
+                                    modifier = Modifier.size(28.dp).testTag("increase_days_used")
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Increase Days", modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Gross Rent ($daysUsed day(s) × ₹${dailyRateForReturning.toInt()}/day)",
+                                fontSize = 12.sp,
+                                color = BabaGray,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            Text(
+                                text = if (isNoWorkDone) "₹0.0 (Waived)" else "₹${grossRentalFee.toInt()}",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isNoWorkDone) BabaSuccess else BabaDark
+                                color = if (isNoWorkDone) BabaSuccess else BabaDark,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         if (!isNoWorkDone && totalDiscount > 0) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Total Discount", fontSize = 12.sp, color = BabaGray)
-                                Text("- ₹$totalDiscount", fontSize = 12.sp, color = BabaRed, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Total Discount", fontSize = 12.sp, color = BabaGray, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                Text("- ₹${totalDiscount.toInt()}", fontSize = 12.sp, color = BabaRed, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         }
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 text = if (isPartialReturn) "Advance Deposit Allocated ($returningQuantity of $activeUnits)" else "Advance Deposit Deducted",
                                 fontSize = 12.sp,
-                                color = BabaGray
+                                color = BabaGray,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
                             )
                             Text(
-                                text = "- ₹$depositAllocated",
+                                text = "- ₹${depositAllocated.toInt()}",
                                 fontSize = 12.sp,
                                 color = BabaSuccess,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
@@ -679,7 +811,7 @@ fun ReturnJobDialog(
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Net Rental Payable Fee", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
                             Text(
-                                text = if (isNoWorkDone) "₹0.0 (NIL)" else "₹$netRentalFee",
+                                text = if (isNoWorkDone) "₹0.0 (NIL)" else "₹${netRentalFee.toInt()}",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isNoWorkDone) BabaSuccess else BabaDark
@@ -910,9 +1042,9 @@ fun ReturnJobDialog(
                             }
 
                             if (isPartialReturn) {
-                                onConfirmPartialReturn(returningQuantity, manualDiscount, selectedMethod, r)
+                                onConfirmPartialReturn(returningQuantity, manualDiscount, selectedMethod, r, daysUsed)
                             } else {
-                                onConfirmFullReturn(returningQuantity, manualDiscount, selectedMethod, r)
+                                onConfirmFullReturn(returningQuantity, manualDiscount, selectedMethod, r, daysUsed)
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
@@ -922,9 +1054,9 @@ fun ReturnJobDialog(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = if (isNoWorkDone) "Confirm NIL Return"
-                            else if (isPartialReturn) "Return ($returningQuantity Units)"
-                            else "Confirm & Close",
+                            text = if (isNoWorkDone) "Confirm NIL Invoice"
+                            else if (isPartialReturn) "Invoice ($returningQuantity Units)"
+                            else "Confirm & Invoice",
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -995,7 +1127,7 @@ fun AddExtraPaymentDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Machine: ${jobSheet.machineName} (Qty: ${jobSheet.quantity})", fontSize = 12.sp, color = BabaDark)
+                        Text("Machine: ${jobSheet.cleanMachineName}", fontSize = 12.sp, color = BabaDark)
                         Text("Current Advance / Deposit: ₹${jobSheet.depositAmount}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BabaSuccess)
                         Text("Received By: ${currentUser.name} (User ID: ${currentUser.id})", fontSize = 11.sp, color = BabaDark, fontWeight = FontWeight.SemiBold)
                     }

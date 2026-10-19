@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+
+    <!-- 1. Golden Yellow Base & Lower B Lobe -->
+    <path
+        android:pathData="M28,6 L72,6 C84.15,6 94,15.85 94,28 L94,72 C94,84.15 84.15,94 72,94 L28,94 C15.85,94 6,84.15 6,72 L6,28 C6,15.85 15.85,6 28,6 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="50"
+                android:startY="45"
+                android:endX="85"
+                android:endY="94"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFD600" />
+                <item android:offset="1.0" android:color="#F39C00" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Subtle shadow under the lower B lobe curve on the right -->
+    <path
+        android:fillColor="#D47A00"
+        android:pathData="M45,51 L74,51 C85,51 92,60 92,71 C92,83 83,92 70,93 L75,93 C86,92 94,83 94,71 C94,59 86,50 74,50 L45,50 Z" />
+
+    <!-- Highlighted Lower B Lobe -->
+    <path
+        android:pathData="M24,51 L72,51 C83.05,51 91,59.5 91,71 C91,82.5 82.5,91.5 70,93 L25,94 C15,94 6,85 6,72 L6,51 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="30"
+                android:startY="51"
+                android:endX="75"
+                android:endY="92"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFDA00" />
+                <item android:offset="0.7" android:color="#FFC400" />
+                <item android:offset="1.0" android:color="#F5A300" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 2. Upper B Lobe & Left Stem in Vibrant Baba Red -->
+    <path
+        android:pathData="M28,6 L70,6 C83.25,6 94,16.75 94,29.5 C94,42.5 83.5,51.5 70,51.5 L47,51.5 L25,94 C14.5,92.5 6,83.2 6,72 L6,28 C6,15.85 15.85,6 28,6 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="20"
+                android:startY="8"
+                android:endX="75"
+                android:endY="75"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#F50B00" />
+                <item android:offset="0.55" android:color="#CC0000" />
+                <item android:offset="1.0" android:color="#8F0000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 3. Long Diagonal Cast Shadow under Hammer Claw & Handle -->
+    <path
+        android:pathData="M25.5,30.5 L6,49.5 L6,72 C6,80.5 10.8,87.9 18,91.6 L42,41 L39.8,39.8 L41.5,34.5 L35,28.5 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="35"
+                android:startY="32"
+                android:endX="8"
+                android:endY="82"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#990000" />
+                <item android:offset="1.0" android:color="#5C0000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Subtle divider highlight line along horizontal waist of B -->
+    <path
+        android:fillColor="#44FFFFFF"
+        android:pathData="M46.5,51.2 L71,51.2 C78,51.2 84,48.5 88,44 C84,49.2 78,52 71,52 L46,52 Z" />
+
+    <!-- 4. Crisp White Claw Hammer Silhouette -->
+    <path
+        android:pathData="M42.5,22.2 C48.2,22.4 53.8,24.6 58.5,27.2 C59.3,30.4 61.8,32.2 65.2,32.0 C66.2,31.9 67.2,30.3 68.4,30.7 L75.6,34.2 C76.6,34.7 77.0,35.9 76.5,36.9 L71.2,47.4 C70.7,48.4 69.5,48.8 68.5,48.3 L63.0,45.6 C62.3,45.2 62.6,43.5 61.8,41.8 C59.8,38.2 55.2,37.8 52.3,41.2 L25.4,93.8 C20.8,93.4 16.5,91.6 13.0,88.8 L41.8,41.2 L39.8,40.1 L41.2,36.2 C42.2,32.2 38.5,28.8 33.2,28.8 C30.2,28.8 27.6,29.6 25.8,30.6 C24.9,31.0 24.4,30.1 25.0,29.2 C29.2,24.2 35.8,22.0 42.5,22.2 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="50"
+                android:startY="24"
+                android:endX="20"
+                android:endY="92"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.78" android:color="#FFFFFF" />
+                <item android:offset="1.0" android:color="#FFF3D1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

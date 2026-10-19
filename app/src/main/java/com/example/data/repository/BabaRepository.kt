@@ -47,6 +47,12 @@ class BabaRepository(private val db: AppDatabase) {
             val durationMs = maxOf(0L, returnTime - checkoutTime)
             return ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
         }
+
+        fun calculateBookedDays(checkoutTime: Long, dueTime: Long): Int {
+            val totalMsPerDay = 24 * 3600 * 1000.0
+            val durationMs = maxOf(0L, dueTime - checkoutTime)
+            return kotlin.math.round(durationMs / totalMsPerDay).toInt().coerceAtLeast(1)
+        }
     }
 
     // --- Users ---
@@ -78,8 +84,8 @@ class BabaRepository(private val db: AppDatabase) {
     // --- Job Sheets ---
     val allJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getAllJobSheets()
     val activeJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getActiveJobSheets()
-    val overdueJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getOverdueJobSheets()
-    fun getOverdueJobSheets(now: Long = System.currentTimeMillis()) = db.jobSheetDao().getOverdueJobSheets()
+    val overdueJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getOverdueJobSheets(System.currentTimeMillis())
+    fun getOverdueJobSheets(now: Long = System.currentTimeMillis()) = db.jobSheetDao().getOverdueJobSheets(now)
     val returnedJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getReturnedJobSheets()
     fun getJobSheetsForCustomer(customerId: String) = db.jobSheetDao().getJobSheetsForCustomer(customerId)
 
@@ -122,7 +128,7 @@ class BabaRepository(private val db: AppDatabase) {
         val dueTime = explicitDueTime ?: computeDueTime(now, billingCycle)
 
         val primaryMachineId = items.firstOrNull()?.machineId ?: ""
-        val combinedMachineNames = items.joinToString(", ") { "${it.quantity}x ${it.machineName}" }
+        val combinedMachineNames = items.joinToString(", ") { it.machineName }
         val uniqueCategories = items.map { it.categoryName }.distinct()
         val combinedCategoryNames = if (uniqueCategories.size > 1) {
             "Multi-Category (${uniqueCategories.joinToString(", ")})"
@@ -255,42 +261,57 @@ class BabaRepository(private val db: AppDatabase) {
     }
 
     fun calculateDaysUsed(checkoutTime: Long, returnTime: Long = System.currentTimeMillis()): Int {
-        val totalMsPerDay = 24 * 3600 * 1000.0
-        val durationMs = maxOf(0L, returnTime - checkoutTime)
-        return ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+        return Companion.calculateDaysUsed(checkoutTime, returnTime)
+    }
+
+    fun calculateBookedDays(checkoutTime: Long, dueTime: Long): Int {
+        return Companion.calculateBookedDays(checkoutTime, dueTime)
     }
 
     fun calculateReturnBill(
         jobSheet: JobSheetEntity,
         returningQuantity: Int = jobSheet.remainingActiveQty,
         manualDiscount: Double = 0.0,
-        returnTime: Long = System.currentTimeMillis()
+        returnTime: Long = System.currentTimeMillis(),
+        overrideDaysUsed: Int? = null
     ): ReturnCalculation {
-        val daysUsed = calculateDaysUsed(jobSheet.checkoutTime, returnTime)
-        val dailyRate = jobSheet.rateUsed
+        val elapsedDays = calculateDaysUsed(jobSheet.checkoutTime, returnTime)
+        val bookedDays = calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+        val daysUsed = (overrideDaysUsed ?: maxOf(elapsedDays, bookedDays)).coerceAtLeast(1)
+        val initialQty = jobSheet.effectiveInitialQty.coerceAtLeast(1)
         val qty = returningQuantity.coerceAtLeast(1)
 
-        // Formula: (Days Used × Daily Rate) - Initial Advance Deposit (and manual discount)
-        val baseRentalFee = daysUsed * dailyRate * qty
-        val initialDiscountProrated = if (jobSheet.effectiveInitialQty > 0) {
-            (jobSheet.discount * qty) / jobSheet.effectiveInitialQty
+        // jobSheet.rateUsed is ALREADY the combined daily rate for all initialQty machines on the job sheet.
+        // For a full return (qty == initialQty), dailyRateForReturning is jobSheet.rateUsed.
+        // For a partial return (qty < initialQty), prorate proportionally across returning units.
+        val dailyRateForReturning = if (qty >= initialQty) {
+            jobSheet.rateUsed
+        } else {
+            (jobSheet.rateUsed * qty.toDouble()) / initialQty.toDouble()
+        }
+
+        // Formula: (Days Used × Daily Rate for Returning Machines) - Discount - Deposit Allocated
+        val baseRentalFee = daysUsed * dailyRateForReturning
+        val initialDiscountProrated = if (initialQty > 0) {
+            (jobSheet.discount * qty) / initialQty
         } else {
             jobSheet.discount
         }
         val totalDiscount = initialDiscountProrated + manualDiscount
         val netTotalFee = max(0.0, baseRentalFee - totalDiscount)
 
-        val depositAllocated = if (jobSheet.remainingActiveQty > 0) {
-            (jobSheet.depositAmount * qty) / jobSheet.remainingActiveQty
-        } else {
+        val activeQty = jobSheet.remainingActiveQty.coerceAtLeast(1)
+        val depositAllocated = if (qty >= activeQty) {
             jobSheet.depositAmount
+        } else {
+            (jobSheet.depositAmount * qty) / activeQty
         }
 
         val balanceDueOrRefund = netTotalFee - depositAllocated
 
         return ReturnCalculation(
             baseDays = daysUsed,
-            daysLate = maxOf(0, daysUsed - 1),
+            daysLate = maxOf(0, daysUsed - bookedDays),
             baseRentalFee = baseRentalFee,
             lateFee = 0.0,
             discount = totalDiscount,
@@ -299,7 +320,7 @@ class BabaRepository(private val db: AppDatabase) {
             balanceDueOrRefund = balanceDueOrRefund,
             daysUsed = daysUsed,
             returningQuantity = qty,
-            dailyRate = dailyRate
+            dailyRate = dailyRateForReturning
         )
     }
 
@@ -357,14 +378,16 @@ class BabaRepository(private val db: AppDatabase) {
         manualDiscount: Double = 0.0,
         returnTime: Long = System.currentTimeMillis(),
         remark: String = "",
-        context: Context? = null
+        context: Context? = null,
+        overrideDaysUsed: Int? = null
     ): JobSheetEntity? {
         val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return null
         val calc = calculateReturnBill(
             jobSheet = jobSheet,
             returningQuantity = jobSheet.remainingActiveQty,
             manualDiscount = manualDiscount,
-            returnTime = returnTime
+            returnTime = returnTime,
+            overrideDaysUsed = overrideDaysUsed
         )
         val isNoWorkDone = settlementMethod == "no_work_done"
 
@@ -501,14 +524,16 @@ class BabaRepository(private val db: AppDatabase) {
         manualDiscount: Double = 0.0,
         returnTime: Long = System.currentTimeMillis(),
         remark: String = "",
-        context: Context? = null
+        context: Context? = null,
+        overrideDaysUsed: Int? = null
     ): JobSheetEntity? {
         val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return null
         val calc = calculateReturnBill(
             jobSheet = jobSheet,
             returningQuantity = returningQuantity,
             manualDiscount = manualDiscount,
-            returnTime = returnTime
+            returnTime = returnTime,
+            overrideDaysUsed = overrideDaysUsed
         )
 
         val currentActiveQty = jobSheet.remainingActiveQty

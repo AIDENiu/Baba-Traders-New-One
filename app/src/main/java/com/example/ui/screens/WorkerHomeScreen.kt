@@ -339,16 +339,26 @@ fun WorkerJobCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             // Machine Name & Qty
+            val baseMachineLabel = jobSheet.cleanMachineName
             val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
-                "${jobSheet.remainingActiveQty}x ${jobSheet.machineName} (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
             } else {
-                "${jobSheet.quantity}x ${jobSheet.machineName}"
+                baseMachineLabel
             }
             Text(
                 text = quantityDisplay,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = BabaDark
+            )
+
+            val bookedDays = com.example.data.repository.BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+            val estTotalRent = maxOf(0.0, (bookedDays * jobSheet.rateUsed) - jobSheet.discount)
+            Text(
+                text = "Rate: ₹${jobSheet.rateUsed.toInt()}/day • $bookedDays day(s) = ₹${estTotalRent.toInt()}",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = BabaRed
             )
 
             // Customer Info
@@ -373,7 +383,7 @@ fun WorkerJobCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text("Due Time", fontSize = 10.sp, color = BabaGray)
+                    Text("Due Time ($bookedDays d)", fontSize = 10.sp, color = BabaGray)
                     Text(
                         text = dateFormat.format(Date(jobSheet.dueTime)),
                         fontSize = 11.sp,
@@ -384,7 +394,7 @@ fun WorkerJobCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text("Deposit Taken", fontSize = 10.sp, color = BabaGray)
                     Text(
-                        text = "₹${jobSheet.depositAmount}",
+                        text = "₹${jobSheet.depositAmount.toInt()}",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = BabaSuccess
@@ -400,16 +410,16 @@ fun WorkerJobCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Mark Returned Button
+                // Invoice / Return Button
                 Button(
                     onClick = onReturn,
                     colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1.3f).testTag("return_job_${jobSheet.id}")
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = "Return", modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Check, contentDescription = "Invoice", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Return", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Invoice", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
 
                 // Add Extra Payment Button

@@ -61,19 +61,28 @@ object PdfGenerator {
         paint.color = COLOR_SECONDARY
         canvas.drawRect(0f, 92f, PAGE_WIDTH.toFloat(), 96f, paint)
 
+        // Draw App Logo in Header Banner
+        try {
+            val logoBmp = android.graphics.BitmapFactory.decodeResource(context.resources, com.example.R.drawable.baba_logo_img)
+            if (logoBmp != null) {
+                val destRect = RectF(32f, 18f, 84f, 70f)
+                canvas.drawBitmap(logoBmp, null, destRect, paint)
+            }
+        } catch (_: Exception) {}
+
         // Shop Title & Subtitles
         paint.color = COLOR_WHITE
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         paint.textSize = 20f
-        canvas.drawText("BABA TRADERS", 36f, 38f, paint)
+        canvas.drawText("BABA TRADERS", 94f, 38f, paint)
 
         paint.textSize = 10f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        canvas.drawText("& Engineering Hardwares — Machinery & Tool Rentals", 36f, 54f, paint)
+        canvas.drawText("& Engineering Hardwares — Machinery & Tool Rentals", 94f, 54f, paint)
 
         paint.color = Color.rgb(255, 235, 238)
         paint.textSize = 8.5f
-        canvas.drawText("Bypass Road, Near Bus Stand • Helpline: +91 98765 43210 • Reg No: BT-ENG-2024", 36f, 70f, paint)
+        canvas.drawText("Bypass Road, Near Bus Stand • Helpline: +91 98765 43210 • Reg No: BT-ENG-2024", 94f, 70f, paint)
 
         // Right side badge: RENTAL INVOICE
         paint.color = COLOR_SECONDARY
@@ -218,13 +227,18 @@ object PdfGenerator {
         paint.color = COLOR_DARK
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         paint.textSize = 10f
-        canvas.drawText(jobSheet.machineName, 46f, y + 22f, paint)
+        canvas.drawText(jobSheet.cleanMachineName, 46f, y + 22f, paint)
+
+        val bookedDays = com.example.data.repository.BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
+        val estimatedNetRent = maxOf(0.0, (bookedDays * jobSheet.rateUsed) - jobSheet.discount)
+        val isClosedJob = jobSheet.status == "returned" || jobSheet.status == "closed"
+        val displayTotalCharge = if (isClosedJob) jobSheet.totalRentalFee else estimatedNetRent
 
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         paint.textSize = 9f
         canvas.drawText(jobSheet.categoryName, 240f, y + 22f, paint)
-        canvas.drawText("${jobSheet.quantity} unit", 330f, y + 22f, paint)
-        canvas.drawText("₹${jobSheet.rateUsed.toInt()}", 380f, y + 22f, paint)
+        canvas.drawText("${jobSheet.effectiveInitialQty} unit(s) • ${bookedDays}d", 325f, y + 22f, paint)
+        canvas.drawText("₹${jobSheet.rateUsed.toInt()}/d", 385f, y + 22f, paint)
         canvas.drawText("₹${jobSheet.depositAmount.toInt()}", 460f, y + 22f, paint)
 
         y += 46f
@@ -241,7 +255,7 @@ object PdfGenerator {
         paint.color = COLOR_PRIMARY
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         paint.textSize = 9f
-        canvas.drawText("RENTAL SCHEDULE", 46f, y + 18f, paint)
+        canvas.drawText("RENTAL SCHEDULE (DURATION: $bookedDays DAY(S))", 46f, y + 18f, paint)
 
         paint.color = COLOR_DARK
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
@@ -296,11 +310,11 @@ object PdfGenerator {
 
         // Right Financial Items (Final Totals)
         paint.color = COLOR_GRAY
-        canvas.drawText("Total Rental Charge:", 300f, y + 44f, paint)
+        canvas.drawText(if (isClosedJob) "Total Rental Charge:" else "Est. Rent ($bookedDays d × ₹${jobSheet.rateUsed.toInt()}):", 300f, y + 44f, paint)
         paint.color = COLOR_DARK
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         paint.textSize = 10f
-        canvas.drawText("₹${jobSheet.totalRentalFee.toInt()}", 450f, y + 44f, paint)
+        canvas.drawText("₹${displayTotalCharge.toInt()}", 450f, y + 44f, paint)
 
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         paint.textSize = 9f
@@ -309,7 +323,7 @@ object PdfGenerator {
 
         val settlementText: String
         val settlementColor: Int
-        if (jobSheet.status == "returned" || jobSheet.status == "closed") {
+        if (isClosedJob) {
             if (jobSheet.returnRemark.contains("no work done", ignoreCase = true) || (jobSheet.totalRentalFee == 0.0 && jobSheet.finalSettlement == 0.0 && jobSheet.returnTime != null)) {
                 settlementText = "No Work Done (NIL Payment)"
                 settlementColor = COLOR_DARK
@@ -324,7 +338,12 @@ object PdfGenerator {
                 settlementColor = COLOR_SUCCESS
             }
         } else {
-            settlementText = "Active Job (Pending Return)"
+            val estBal = estimatedNetRent - jobSheet.depositAmount
+            settlementText = when {
+                estBal > 0 -> "Est. Balance at Return: ₹${estBal.toInt()}"
+                estBal < 0 -> "Est. Refund at Return: ₹${abs(estBal).toInt()}"
+                else -> "Active Job (Covered by Deposit)"
+            }
             settlementColor = COLOR_PRIMARY
         }
 
@@ -504,7 +523,7 @@ object PdfGenerator {
 
         y += 18f
 
-        val machineFrequencies = nonDeleted.groupBy { it.machineName }
+        val machineFrequencies = nonDeleted.groupBy { it.cleanMachineName }
             .mapValues { it.value.sumOf { job -> job.quantity } }
             .toList()
             .sortedByDescending { it.second }
@@ -595,7 +614,7 @@ object PdfGenerator {
             canvas.drawText(job.id.take(11), 44f, y + 14f, paint)
             val custStr = if (job.customerName.length > 18) job.customerName.take(16) + ".." else job.customerName
             canvas.drawText(custStr, 120f, y + 14f, paint)
-            val machStr = if (job.machineName.length > 20) job.machineName.take(18) + ".." else job.machineName
+            val machStr = if (job.cleanMachineName.length > 20) job.cleanMachineName.take(18) + ".." else job.cleanMachineName
             canvas.drawText(machStr, 230f, y + 14f, paint)
             canvas.drawText(dateOnlyFormat.format(Date(job.checkoutTime)), 350f, y + 14f, paint)
 
@@ -690,7 +709,7 @@ object PdfGenerator {
                 putExtra(Intent.EXTRA_SUBJECT, "BABA Traders Rental Invoice - ${jobSheet.id}")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Rental Job Sheet & Invoice for ${jobSheet.customerName} (${jobSheet.machineName}) from BABA Traders."
+                    "Rental Job Sheet & Invoice for ${jobSheet.customerName} (${jobSheet.cleanMachineName}) from BABA Traders."
                 )
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
