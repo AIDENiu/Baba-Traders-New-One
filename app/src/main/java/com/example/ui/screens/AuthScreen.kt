@@ -54,7 +54,8 @@ import kotlinx.coroutines.tasks.await
 fun AuthScreen(
     users: List<UserEntity>,
     onLoginSuccess: (UserEntity) -> Unit,
-    onOwnerPinReset: (owner: UserEntity, newPin: String) -> Unit = { _, _ -> }
+    onOwnerPinReset: (owner: UserEntity, newPin: String) -> Unit = { _, _ -> },
+    onOwnerPhoneVerified: (owner: UserEntity, verifiedPhone: String) -> Unit = { _, _ -> }
 ) {
     val defaultOperators = remember {
         listOf(
@@ -88,7 +89,7 @@ fun AuthScreen(
         mutableStateOf(activeUsers.firstOrNull { it.role == "owner" } ?: activeUsers.firstOrNull())
     }
     var pin by remember { mutableStateOf("") }
-    var pinVisible by remember { mutableStateOf(true) }
+    var pinVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var failedAttempts by remember { mutableIntStateOf(0) }
     var lockoutUntil by remember { mutableLongStateOf(0L) }
@@ -303,7 +304,7 @@ fun AuthScreen(
                             }
                         },
                         label = { Text("Enter 4-Digit Security PIN") },
-                        placeholder = { Text(if (selectedUser?.role == "owner") "PIN: 1234" else "PIN: 0000") },
+                        placeholder = { Text("••••") },
                         leadingIcon = {
                             Icon(Icons.Default.Lock, contentDescription = "PIN", tint = BabaRed)
                         },
@@ -386,7 +387,7 @@ fun AuthScreen(
                                     lockoutUntil = System.currentTimeMillis() + 60_000L
                                     errorMessage = "5 failed attempts. Account locked out for 60 seconds."
                                 } else {
-                                    errorMessage = "Incorrect PIN (${5 - failedAttempts} attempts remaining). Default is ${if (user.role == "owner") "1234" else "0000"}"
+                                    errorMessage = "Incorrect PIN (${5 - failedAttempts} attempts remaining)."
                                 }
                             } else {
                                 failedAttempts = 0
@@ -534,6 +535,9 @@ fun AuthScreen(
                     pin = newPin
                     errorMessage = null
                     showOwnerOtpPinReset = false
+                },
+                onPhoneVerified = { verifiedPhone ->
+                    onOwnerPhoneVerified(owner, verifiedPhone)
                 }
             )
         }

@@ -359,6 +359,9 @@ fun ManageStaffScreen(
             onPinChanged = { newPin ->
                 onUpdateOwnerPin(owner, newPin)
                 ownerToChangePin = null
+            },
+            onPhoneVerified = { verifiedPhone ->
+                onUpdateOwnerPhone(owner, verifiedPhone)
             }
         )
     }

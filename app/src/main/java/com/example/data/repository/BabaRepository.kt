@@ -8,6 +8,7 @@ import com.example.data.AppDatabase
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
 import com.example.data.model.DailyCashEntity
+import com.example.data.model.ExpenseEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
@@ -25,6 +26,14 @@ import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.max
 
+data class SplitPaymentBreakdown(
+    val isSplit: Boolean,
+    val cashAmount: Double,
+    val gpayAmount: Double,
+    val singleMethod: String,
+    val displayMode: String
+)
+
 data class ReturnCalculation(
     val baseDays: Int = 1,
     val daysLate: Int = 0,
@@ -36,22 +45,108 @@ data class ReturnCalculation(
     val balanceDueOrRefund: Double, // > 0: customer owes balance; < 0: shop refunds customer; == 0: balanced
     val daysUsed: Int = baseDays + daysLate,
     val returningQuantity: Int = 1,
-    val dailyRate: Double = 0.0
+    val dailyRate: Double = 0.0,
+    val exceeded8AmCutoff: Boolean = false,
+    val extraRentApplied: Double = 0.0
 )
 
 class BabaRepository(private val db: AppDatabase) {
 
     companion object {
+        /**
+         * Computes the 8:00 AM cutoff timestamp for a given number of rental days.
+         * Daily rental cycle: "8:00 AM today to 8:00 AM tomorrow".
+         */
+        fun computeCutoffTimeForDays(checkoutTime: Long, days: Int = 1): Long {
+            val safeDays = days.coerceAtLeast(1)
+            return Calendar.getInstance().apply {
+                timeInMillis = checkoutTime
+                add(Calendar.DAY_OF_MONTH, safeDays)
+                set(Calendar.HOUR_OF_DAY, 8)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        /**
+         * Calculates rental days used based on the "8:00 AM today to 8:00 AM tomorrow" cycle.
+         * If the return time exceeds the 8:00 AM cutoff time, extra day rent is automatically applied.
+         */
         fun calculateDaysUsed(checkoutTime: Long, returnTime: Long = System.currentTimeMillis()): Int {
+            if (returnTime <= checkoutTime) return 1
+            val firstCutoff = computeCutoffTimeForDays(checkoutTime, 1)
+            val cutoffBasedDays = if (returnTime <= firstCutoff) {
+                1
+            } else {
+                val msAfterCutoff = returnTime - firstCutoff
+                val extraDays = ceil(msAfterCutoff.toDouble() / (24 * 3600 * 1000.0)).toInt().coerceAtLeast(1)
+                1 + extraDays
+            }
+
             val totalMsPerDay = 24 * 3600 * 1000.0
             val durationMs = maxOf(0L, returnTime - checkoutTime)
-            return ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+            val rollingDays = ceil(durationMs.toDouble() / totalMsPerDay).toInt().coerceAtLeast(1)
+            return maxOf(cutoffBasedDays, rollingDays)
         }
 
         fun calculateBookedDays(checkoutTime: Long, dueTime: Long): Int {
+            if (dueTime <= checkoutTime) return 1
+            val startCal = Calendar.getInstance().apply {
+                timeInMillis = checkoutTime
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val endCal = Calendar.getInstance().apply {
+                timeInMillis = dueTime
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val calendarDiffDays = kotlin.math.round((endCal.timeInMillis - startCal.timeInMillis) / (24 * 3600 * 1000.0)).toInt()
+            if (calendarDiffDays >= 1) {
+                return calendarDiffDays
+            }
             val totalMsPerDay = 24 * 3600 * 1000.0
             val durationMs = maxOf(0L, dueTime - checkoutTime)
             return kotlin.math.round(durationMs / totalMsPerDay).toInt().coerceAtLeast(1)
+        }
+
+        fun parsePaymentMethod(methodStr: String, totalAmount: Double): SplitPaymentBreakdown {
+            val trimmed = methodStr.trim()
+            if (trimmed.startsWith("split:", ignoreCase = true)) {
+                val parts = trimmed.split(":")
+                val cash = parts.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val gpay = parts.getOrNull(2)?.toDoubleOrNull() ?: maxOf(0.0, totalAmount - cash)
+                val label = when {
+                    cash > 0 && gpay > 0 -> "Split (Cash ₹${cash.toInt()} + GPay ₹${gpay.toInt()})"
+                    cash > 0 -> "cash"
+                    gpay > 0 -> "gpay"
+                    else -> "cash"
+                }
+                return SplitPaymentBreakdown(
+                    isSplit = cash > 0 && gpay > 0,
+                    cashAmount = cash,
+                    gpayAmount = gpay,
+                    singleMethod = if (cash >= gpay) "cash" else "gpay",
+                    displayMode = label
+                )
+            }
+            val lower = trimmed.lowercase(Locale.getDefault())
+            return SplitPaymentBreakdown(
+                isSplit = false,
+                cashAmount = if (lower == "cash") totalAmount else 0.0,
+                gpayAmount = if (lower == "gpay" || lower == "upi") totalAmount else 0.0,
+                singleMethod = lower,
+                displayMode = when (lower) {
+                    "gpay", "upi" -> "GPay"
+                    "cash" -> "Cash"
+                    else -> trimmed
+                }
+            )
         }
     }
 
@@ -80,6 +175,8 @@ class BabaRepository(private val db: AppDatabase) {
     suspend fun getMachineById(id: String) = db.machineDao().getMachineById(id)
     suspend fun insertMachine(machine: MachineEntity) = db.machineDao().insertMachine(machine)
     suspend fun updateMachine(machine: MachineEntity) = db.machineDao().updateMachine(machine)
+    suspend fun deleteMachine(id: String) = db.machineDao().deleteMachineById(id)
+    suspend fun deleteAllMachines() = db.machineDao().deleteAllMachines()
 
     // --- Job Sheets ---
     val allJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getAllJobSheets()
@@ -89,18 +186,116 @@ class BabaRepository(private val db: AppDatabase) {
     val returnedJobSheets: Flow<List<JobSheetEntity>> = db.jobSheetDao().getReturnedJobSheets()
     fun getJobSheetsForCustomer(customerId: String) = db.jobSheetDao().getJobSheetsForCustomer(customerId)
 
-    // --- Activity Log & Payments ---
+    // --- Activity Log, Payments & Expenses ---
     val activityLogs: Flow<List<ActivityLogEntity>> = db.activityLogDao().getAllLogs()
     val allPayments: Flow<List<PaymentEntity>> = db.paymentDao().getAllPayments()
+    val allExpenses: Flow<List<ExpenseEntity>> = db.expenseDao().getAllExpenses()
+
+    suspend fun addExpense(
+        date: String,
+        timestamp: Long,
+        expenseType: String,
+        amount: Double,
+        remarks: String,
+        user: UserEntity
+    ): ExpenseEntity {
+        val expense = ExpenseEntity(
+            id = UUID.randomUUID().toString(),
+            date = date,
+            timestamp = timestamp,
+            expenseType = expenseType.trim(),
+            amount = amount,
+            remarks = remarks.trim(),
+            createdBy = user.id,
+            createdByName = user.name
+        )
+        db.expenseDao().insertExpense(expense)
+        db.activityLogDao().insertLog(
+            ActivityLogEntity(
+                id = UUID.randomUUID().toString(),
+                jobSheetId = "EXPENSE",
+                action = "expense_added",
+                performedBy = user.id,
+                performedByName = user.name,
+                timestamp = System.currentTimeMillis(),
+                changeSummary = "${user.name} logged expense ₹${amount.toInt()} for '${expense.expenseType}' on $date"
+            )
+        )
+        return expense
+    }
+
+    suspend fun deleteExpense(id: String) {
+        db.expenseDao().deleteExpenseById(id)
+    }
 
     suspend fun generateNextJobId(): String {
-        val count = db.jobSheetDao().getTotalCount() + 413
+        val count = db.jobSheetDao().getTotalCount() + 1
         return String.format(Locale.getDefault(), "JOB-%04d", count)
     }
 
-    // Billing Due Date calculation - Rolling 24-hour window from exact checkout time
-    fun computeDueTime(checkoutTime: Long, billingCycle: String = "24hr"): Long {
-        return checkoutTime + 24 * 3600 * 1000L
+    // Billing Due Date calculation - Daily rental cycle: 8:00 AM today to 8:00 AM tomorrow
+    fun computeDueTime(checkoutTime: Long, billingCycle: String = "working_hours"): Long {
+        return computeCutoffTimeForDays(checkoutTime, 1)
+    }
+
+    private suspend fun insertPaymentWithSplitSupport(
+        jobSheetId: String,
+        totalAmount: Double,
+        methodRaw: String,
+        type: String,
+        timestamp: Long,
+        user: UserEntity,
+        baseRemark: String
+    ): String {
+        val parsed = parsePaymentMethod(methodRaw, totalAmount)
+        if (parsed.isSplit && totalAmount > 0) {
+            if (parsed.cashAmount > 0) {
+                db.paymentDao().insertPayment(
+                    PaymentEntity(
+                        id = UUID.randomUUID().toString(),
+                        jobSheetId = jobSheetId,
+                        amount = parsed.cashAmount,
+                        method = "cash",
+                        type = type,
+                        timestamp = timestamp,
+                        handledBy = user.id,
+                        handledByName = user.name,
+                        remark = "$baseRemark [Split: Cash ₹${parsed.cashAmount.toInt()} + GPay ₹${parsed.gpayAmount.toInt()}]"
+                    )
+                )
+            }
+            if (parsed.gpayAmount > 0) {
+                db.paymentDao().insertPayment(
+                    PaymentEntity(
+                        id = UUID.randomUUID().toString(),
+                        jobSheetId = jobSheetId,
+                        amount = parsed.gpayAmount,
+                        method = "gpay",
+                        type = type,
+                        timestamp = timestamp,
+                        handledBy = user.id,
+                        handledByName = user.name,
+                        remark = "$baseRemark [Split: Cash ₹${parsed.cashAmount.toInt()} + GPay ₹${parsed.gpayAmount.toInt()}]"
+                    )
+                )
+            }
+            return parsed.displayMode
+        } else {
+            db.paymentDao().insertPayment(
+                PaymentEntity(
+                    id = UUID.randomUUID().toString(),
+                    jobSheetId = jobSheetId,
+                    amount = totalAmount,
+                    method = parsed.singleMethod,
+                    type = type,
+                    timestamp = timestamp,
+                    handledBy = user.id,
+                    handledByName = user.name,
+                    remark = baseRemark
+                )
+            )
+            return if (parsed.isSplit) parsed.displayMode else parsed.singleMethod
+        }
     }
 
     suspend fun createJobSheet(
@@ -125,7 +320,7 @@ class BabaRepository(private val db: AppDatabase) {
         // 2. Generate unique display ID
         val jobId = generateNextJobId()
         val now = System.currentTimeMillis()
-        val dueTime = explicitDueTime ?: computeDueTime(now, billingCycle)
+        val dueTime = explicitDueTime ?: computeDueTime(now, "working_hours")
 
         val primaryMachineId = items.firstOrNull()?.machineId ?: ""
         val combinedMachineNames = items.joinToString(", ") { it.machineName }
@@ -138,6 +333,8 @@ class BabaRepository(private val db: AppDatabase) {
         val totalQty = items.sumOf { it.quantity }
         val combinedRate = items.sumOf { it.quantity * it.rate }
         val itemsJsonStr = SelectedMachineItem.listToJson(items)
+        val parsedPayment = parsePaymentMethod(depositMethod, depositAmount)
+        val storedPaymentMode = if (parsedPayment.isSplit) parsedPayment.displayMode else parsedPayment.singleMethod
 
         val jobSheet = JobSheetEntity(
             id = jobId,
@@ -154,7 +351,7 @@ class BabaRepository(private val db: AppDatabase) {
             rateUsed = combinedRate,
             discount = discount,
             depositAmount = depositAmount,
-            billingCycle = billingCycle,
+            billingCycle = "working_hours",
             checkoutTime = now,
             dueTime = dueTime,
             status = "active",
@@ -167,7 +364,7 @@ class BabaRepository(private val db: AppDatabase) {
             personPhotoPath = personPhotoPath,
             idPhotoPath = idPhotoPath,
             machinePhotoPath = machinePhotoPath,
-            paymentMode = depositMethod,
+            paymentMode = storedPaymentMode,
             itemsJson = itemsJsonStr
         )
 
@@ -177,20 +374,16 @@ class BabaRepository(private val db: AppDatabase) {
             db.machineDao().decrementStock(item.machineId, item.quantity)
         }
 
-        // 4. Record advance received as the first payment entry with its mode of payment
+        // 4. Record advance received as the first payment entry (supports Cash, GPay, or Split Cash + GPay)
         if (depositAmount > 0) {
-            db.paymentDao().insertPayment(
-                PaymentEntity(
-                    id = UUID.randomUUID().toString(),
-                    jobSheetId = jobId,
-                    amount = depositAmount,
-                    method = depositMethod,
-                    type = "advance",
-                    timestamp = now,
-                    handledBy = checkoutUser.id,
-                    handledByName = checkoutUser.name,
-                    remark = "Advance received at checkout"
-                )
+            insertPaymentWithSplitSupport(
+                jobSheetId = jobId,
+                totalAmount = depositAmount,
+                methodRaw = depositMethod,
+                type = "advance",
+                timestamp = now,
+                user = checkoutUser,
+                baseRemark = "Advance received at checkout"
             )
         }
 
@@ -203,7 +396,7 @@ class BabaRepository(private val db: AppDatabase) {
                 performedBy = checkoutUser.id,
                 performedByName = checkoutUser.name,
                 timestamp = now,
-                changeSummary = "${checkoutUser.name} billed job sheet $jobId for ${customer.name}: $combinedMachineNames ($totalQty items, Rate: ₹$combinedRate, Advance: ₹$depositAmount via $depositMethod)"
+                changeSummary = "${checkoutUser.name} billed job sheet $jobId for ${customer.name}: $combinedMachineNames ($totalQty items, Rate: ₹$combinedRate, Advance: ₹$depositAmount via ${parsedPayment.displayMode})"
             )
         )
 
@@ -277,7 +470,15 @@ class BabaRepository(private val db: AppDatabase) {
     ): ReturnCalculation {
         val elapsedDays = calculateDaysUsed(jobSheet.checkoutTime, returnTime)
         val bookedDays = calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
-        val daysUsed = (overrideDaysUsed ?: maxOf(elapsedDays, bookedDays)).coerceAtLeast(1)
+
+        // If returnTime exceeds the 8:00 AM cutoff (dueTime), automatically apply extra day(s) rent
+        val extraDaysPastDueCutoff = if (returnTime > jobSheet.dueTime) {
+            ceil((returnTime - jobSheet.dueTime).toDouble() / (24 * 3600 * 1000.0)).toInt().coerceAtLeast(1)
+        } else {
+            0
+        }
+        val autoCalculatedDays = maxOf(elapsedDays, bookedDays + extraDaysPastDueCutoff).coerceAtLeast(1)
+        val daysUsed = (overrideDaysUsed ?: autoCalculatedDays).coerceAtLeast(1)
         val initialQty = jobSheet.effectiveInitialQty.coerceAtLeast(1)
         val qty = returningQuantity.coerceAtLeast(1)
 
@@ -289,6 +490,10 @@ class BabaRepository(private val db: AppDatabase) {
         } else {
             (jobSheet.rateUsed * qty.toDouble()) / initialQty.toDouble()
         }
+
+        val extraDaysCount = maxOf(0, daysUsed - bookedDays)
+        val exceededCutoff = returnTime > jobSheet.dueTime || extraDaysCount > 0
+        val extraRentAmount = extraDaysCount * dailyRateForReturning
 
         // Formula: (Days Used × Daily Rate for Returning Machines) - Discount - Deposit Allocated
         val baseRentalFee = daysUsed * dailyRateForReturning
@@ -310,8 +515,8 @@ class BabaRepository(private val db: AppDatabase) {
         val balanceDueOrRefund = netTotalFee - depositAllocated
 
         return ReturnCalculation(
-            baseDays = daysUsed,
-            daysLate = maxOf(0, daysUsed - bookedDays),
+            baseDays = bookedDays,
+            daysLate = extraDaysCount,
             baseRentalFee = baseRentalFee,
             lateFee = 0.0,
             discount = totalDiscount,
@@ -320,7 +525,9 @@ class BabaRepository(private val db: AppDatabase) {
             balanceDueOrRefund = balanceDueOrRefund,
             daysUsed = daysUsed,
             returningQuantity = qty,
-            dailyRate = dailyRateForReturning
+            dailyRate = dailyRateForReturning,
+            exceeded8AmCutoff = exceededCutoff,
+            extraRentApplied = extraRentAmount
         )
     }
 
@@ -333,26 +540,24 @@ class BabaRepository(private val db: AppDatabase) {
     ): Boolean {
         val jobSheet = db.jobSheetDao().getJobSheetById(jobSheetId) ?: return false
         val now = System.currentTimeMillis()
+        val parsed = parsePaymentMethod(paymentMode, amount)
 
-        // Insert payment entry
-        db.paymentDao().insertPayment(
-            PaymentEntity(
-                id = UUID.randomUUID().toString(),
-                jobSheetId = jobSheet.id,
-                amount = amount,
-                method = paymentMode,
-                type = "extra",
-                timestamp = now,
-                handledBy = currentUser.id,
-                handledByName = currentUser.name,
-                remark = remark.ifEmpty { "Extra payment added" }
-            )
+        // Insert payment entry (supports Cash, GPay, or Split Cash + GPay)
+        insertPaymentWithSplitSupport(
+            jobSheetId = jobSheet.id,
+            totalAmount = amount,
+            methodRaw = paymentMode,
+            type = "extra",
+            timestamp = now,
+            user = currentUser,
+            baseRemark = remark.ifEmpty { "Extra payment added" }
         )
 
         // Update depositAmount to immediately reflect updated balance
         val updatedJob = jobSheet.copy(
             depositAmount = jobSheet.depositAmount + amount,
-            finalSettlement = jobSheet.finalSettlement - amount
+            finalSettlement = jobSheet.finalSettlement - amount,
+            paymentMode = if (parsed.isSplit) parsed.displayMode else jobSheet.paymentMode
         )
         db.jobSheetDao().updateJobSheet(updatedJob)
 
@@ -364,7 +569,7 @@ class BabaRepository(private val db: AppDatabase) {
                 performedBy = currentUser.id,
                 performedByName = currentUser.name,
                 timestamp = now,
-                changeSummary = "${currentUser.name} received extra payment ₹$amount ($paymentMode) for job sheet ${jobSheet.id}. Remark: $remark"
+                changeSummary = "${currentUser.name} received extra payment ₹$amount (${parsed.displayMode}) for job sheet ${jobSheet.id}. Remark: $remark"
             )
         )
 
@@ -390,6 +595,7 @@ class BabaRepository(private val db: AppDatabase) {
             overrideDaysUsed = overrideDaysUsed
         )
         val isNoWorkDone = settlementMethod == "no_work_done"
+        val parsedMethod = parsePaymentMethod(settlementMethod, kotlin.math.abs(calc.balanceDueOrRefund))
 
         val updatedJob = jobSheet.copy(
             returnTime = returnTime,
@@ -404,7 +610,8 @@ class BabaRepository(private val db: AppDatabase) {
             lateFee = 0.0,
             totalRentalFee = if (isNoWorkDone) 0.0 else calc.netTotalFee,
             finalSettlement = 0.0, // Fully settled upon return; strictly no false balance due!
-            returnRemark = remark
+            returnRemark = remark,
+            paymentMode = if (!isNoWorkDone && parsedMethod.isSplit) parsedMethod.displayMode else jobSheet.paymentMode
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
@@ -429,7 +636,7 @@ class BabaRepository(private val db: AppDatabase) {
                         id = UUID.randomUUID().toString(),
                         jobSheetId = jobSheet.id,
                         amount = jobSheet.depositAmount,
-                        method = if (settlementMethod == "no_work_done") "cash" else settlementMethod,
+                        method = "cash",
                         type = "refund",
                         timestamp = returnTime,
                         handledBy = currentUser.id,
@@ -452,32 +659,24 @@ class BabaRepository(private val db: AppDatabase) {
                 )
             )
         } else if (calc.balanceDueOrRefund > 0) {
-            db.paymentDao().insertPayment(
-                PaymentEntity(
-                    id = UUID.randomUUID().toString(),
-                    jobSheetId = jobSheet.id,
-                    amount = calc.balanceDueOrRefund,
-                    method = settlementMethod,
-                    type = "settlement",
-                    timestamp = returnTime,
-                    handledBy = currentUser.id,
-                    handledByName = currentUser.name,
-                    remark = remark.ifEmpty { "Final settlement collected (${calc.daysUsed} days used)" }
-                )
+            insertPaymentWithSplitSupport(
+                jobSheetId = jobSheet.id,
+                totalAmount = calc.balanceDueOrRefund,
+                methodRaw = settlementMethod,
+                type = "settlement",
+                timestamp = returnTime,
+                user = currentUser,
+                baseRemark = remark.ifEmpty { "Final settlement collected (${calc.daysUsed} days used)" }
             )
         } else if (calc.balanceDueOrRefund < 0) {
-            db.paymentDao().insertPayment(
-                PaymentEntity(
-                    id = UUID.randomUUID().toString(),
-                    jobSheetId = jobSheet.id,
-                    amount = kotlin.math.abs(calc.balanceDueOrRefund),
-                    method = settlementMethod,
-                    type = "refund",
-                    timestamp = returnTime,
-                    handledBy = currentUser.id,
-                    handledByName = currentUser.name,
-                    remark = remark.ifEmpty { "Deposit refund returned (${calc.daysUsed} days used)" }
-                )
+            insertPaymentWithSplitSupport(
+                jobSheetId = jobSheet.id,
+                totalAmount = kotlin.math.abs(calc.balanceDueOrRefund),
+                methodRaw = settlementMethod,
+                type = "refund",
+                timestamp = returnTime,
+                user = currentUser,
+                baseRemark = remark.ifEmpty { "Deposit refund returned (${calc.daysUsed} days used)" }
             )
         } else {
             db.paymentDao().insertPayment(
@@ -485,7 +684,7 @@ class BabaRepository(private val db: AppDatabase) {
                     id = UUID.randomUUID().toString(),
                     jobSheetId = jobSheet.id,
                     amount = 0.0,
-                    method = settlementMethod,
+                    method = parsedMethod.singleMethod,
                     type = "return_nil",
                     timestamp = returnTime,
                     handledBy = currentUser.id,
@@ -499,7 +698,7 @@ class BabaRepository(private val db: AppDatabase) {
         val summary = if (isNoWorkDone) {
             "${currentUser.name} closed job sheet ${jobSheet.id} with NO WORK DONE (All payments NIL). Full deposit ₹${jobSheet.depositAmount} refunded."
         } else {
-            "${currentUser.name} closed job sheet ${jobSheet.id}. Days used: ${calc.daysUsed}, Total fee: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via $settlementMethod. Remark: ${remark.ifEmpty { "None" }}"
+            "${currentUser.name} closed job sheet ${jobSheet.id}. Days used: ${calc.daysUsed}, Total fee: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via ${parsedMethod.displayMode}. Remark: ${remark.ifEmpty { "None" }}"
         }
         db.activityLogDao().insertLog(
             ActivityLogEntity(
@@ -535,6 +734,7 @@ class BabaRepository(private val db: AppDatabase) {
             returnTime = returnTime,
             overrideDaysUsed = overrideDaysUsed
         )
+        val parsedMethod = parsePaymentMethod(settlementMethod, kotlin.math.abs(calc.balanceDueOrRefund))
 
         val currentActiveQty = jobSheet.remainingActiveQty
         val newRemainingQty = (currentActiveQty - returningQuantity).coerceAtLeast(0)
@@ -556,7 +756,8 @@ class BabaRepository(private val db: AppDatabase) {
             returnedByName = currentUser.name,
             closedBy = if (isFullyClosed) currentUser.id else jobSheet.closedBy,
             closedByName = if (isFullyClosed) currentUser.name else jobSheet.closedByName,
-            returnRemark = if (isFullyClosed) remark else jobSheet.returnRemark
+            returnRemark = if (isFullyClosed) remark else jobSheet.returnRemark,
+            paymentMode = if (parsedMethod.isSplit) parsedMethod.displayMode else jobSheet.paymentMode
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
@@ -568,32 +769,24 @@ class BabaRepository(private val db: AppDatabase) {
 
         // Record payment for this partial return
         if (calc.balanceDueOrRefund > 0) {
-            db.paymentDao().insertPayment(
-                PaymentEntity(
-                    id = UUID.randomUUID().toString(),
-                    jobSheetId = jobSheet.id,
-                    amount = calc.balanceDueOrRefund,
-                    method = settlementMethod,
-                    type = "settlement",
-                    timestamp = returnTime,
-                    handledBy = currentUser.id,
-                    handledByName = currentUser.name,
-                    remark = "Partial return of $returningQuantity machine(s). ${remark.ifEmpty { "Rent settled" }}"
-                )
+            insertPaymentWithSplitSupport(
+                jobSheetId = jobSheet.id,
+                totalAmount = calc.balanceDueOrRefund,
+                methodRaw = settlementMethod,
+                type = "settlement",
+                timestamp = returnTime,
+                user = currentUser,
+                baseRemark = "Partial return of $returningQuantity machine(s). ${remark.ifEmpty { "Rent settled" }}"
             )
         } else if (calc.balanceDueOrRefund < 0) {
-            db.paymentDao().insertPayment(
-                PaymentEntity(
-                    id = UUID.randomUUID().toString(),
-                    jobSheetId = jobSheet.id,
-                    amount = kotlin.math.abs(calc.balanceDueOrRefund),
-                    method = settlementMethod,
-                    type = "refund",
-                    timestamp = returnTime,
-                    handledBy = currentUser.id,
-                    handledByName = currentUser.name,
-                    remark = "Partial return deposit refund for $returningQuantity machine(s). ${remark.ifEmpty { "Refunded" }}"
-                )
+            insertPaymentWithSplitSupport(
+                jobSheetId = jobSheet.id,
+                totalAmount = kotlin.math.abs(calc.balanceDueOrRefund),
+                methodRaw = settlementMethod,
+                type = "refund",
+                timestamp = returnTime,
+                user = currentUser,
+                baseRemark = "Partial return deposit refund for $returningQuantity machine(s). ${remark.ifEmpty { "Refunded" }}"
             )
         } else {
             db.paymentDao().insertPayment(
@@ -601,7 +794,7 @@ class BabaRepository(private val db: AppDatabase) {
                     id = UUID.randomUUID().toString(),
                     jobSheetId = jobSheet.id,
                     amount = 0.0,
-                    method = settlementMethod,
+                    method = parsedMethod.singleMethod,
                     type = "return_nil",
                     timestamp = returnTime,
                     handledBy = currentUser.id,
@@ -611,7 +804,7 @@ class BabaRepository(private val db: AppDatabase) {
             )
         }
 
-        val summary = "${currentUser.name} processed partial return: $returningQuantity units of ${jobSheet.machineName} returned ($newRemainingQty still active on ${jobSheet.id}). Net rent: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via $settlementMethod. Remark: $remark"
+        val summary = "${currentUser.name} processed partial return: $returningQuantity units of ${jobSheet.machineName} returned ($newRemainingQty still active on ${jobSheet.id}). Net rent: ₹${calc.netTotalFee}, Settled: ₹${calc.balanceDueOrRefund} via ${parsedMethod.displayMode}. Remark: $remark"
         db.activityLogDao().insertLog(
             ActivityLogEntity(
                 id = UUID.randomUUID().toString(),

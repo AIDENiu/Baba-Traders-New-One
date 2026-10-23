@@ -109,7 +109,7 @@ fun ReceiptDialog(
                         }
                     ) {
                         Text(
-                            text = if (jobSheet.status == "closed") "RETURNED" else jobSheet.status.uppercase(),
+                            text = if (jobSheet.status == "closed" || jobSheet.status == "returned") "BILLED" else jobSheet.status.uppercase(),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = when (jobSheet.status) {
@@ -183,7 +183,7 @@ fun ReceiptDialog(
                     ReceiptRow("Total Units Rented", "${jobSheet.effectiveInitialQty} machine(s)")
                     ReceiptRow("Combined Daily Rate", "₹${jobSheet.rateUsed.toInt()}/day", isBold = true)
                     ReceiptRow("Booked Duration", "$bookedDays day(s)", isBold = true)
-                    ReceiptRow("Billing Cycle", if (jobSheet.billingCycle == "24hr") "24-Hour Cycle" else "1 Day operation")
+                    ReceiptRow("Billing Cycle", "8:00 AM today to 8:00 AM tomorrow")
                     ReceiptRow("Checked Out", dateFormat.format(Date(jobSheet.checkoutTime)))
                     ReceiptRow("Due Date & Time", dateFormat.format(Date(jobSheet.dueTime)))
                     if (jobSheet.returnTime != null) {
@@ -297,11 +297,26 @@ fun ReceiptDialog(
                         }
                     }
 
-                    // Secondary Text Share & Close
+                    // Secondary Save PDF, Text Share & Close
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        OutlinedButton(
+                            onClick = {
+                                val file = PdfGenerator.generateJobSheetPdf(context, jobSheet)
+                                PdfGenerator.savePdfToDownloads(context, file)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("save_pdf_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Save PDF", modifier = Modifier.size(14.dp), tint = BabaDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Save PDF", fontSize = 11.sp, color = BabaDark)
+                        }
+
                         OutlinedButton(
                             onClick = {
                                 shareReceiptText(context, jobSheet)
@@ -315,14 +330,14 @@ fun ReceiptDialog(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Share Text", fontSize = 11.sp, color = BabaDark)
                         }
+                    }
 
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Close", fontSize = 11.sp)
-                        }
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Close", fontSize = 11.sp, color = BabaRed, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -375,13 +390,13 @@ private fun shareReceiptText(context: Context, jobSheet: JobSheetEntity) {
         Combined Daily Rate: ₹${jobSheet.rateUsed.toInt()}/day
         Booked Duration: $bookedDays day(s)
         Estimated Rent ($bookedDays day(s)): ₹${estTotalRent.toInt()}
-        Billing Cycle: ${if (jobSheet.billingCycle == "24hr") "24-Hour Cycle" else "1 Day operation"}
+        Billing Cycle: 8:00 AM today to 8:00 AM tomorrow
         Checked Out: ${dateFormat.format(Date(jobSheet.checkoutTime))}
         Due Time: ${dateFormat.format(Date(jobSheet.dueTime))}
         Deposit Paid: ₹${jobSheet.depositAmount.toInt()}
         Checkout By: ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}
         Handled By: ${jobSheet.handledByName}
-        Status: ${jobSheet.status.uppercase()}
+        Status: ${if (jobSheet.status == "returned" || jobSheet.status == "closed") "BILLED" else jobSheet.status.uppercase()}
         ----------------------------------
         *Tools for a Stronger Tomorrow*
         Contact: 9876543210
@@ -411,7 +426,9 @@ fun ReturnJobDialog(
     val initialUnits = jobSheet.effectiveInitialQty.coerceAtLeast(1)
     var returningQuantity by remember { mutableStateOf(activeUnits) }
     var discountInput by remember { mutableStateOf("") }
-    var selectedMethod by remember { mutableStateOf("cash") }
+    var selectedMethod by remember { mutableStateOf("cash") } // "cash", "gpay", "split", or "no_work_done"
+    var splitCashInput by remember { mutableStateOf("") }
+    var splitGpayInput by remember { mutableStateOf("") }
     var remarkText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showTransactions by remember { mutableStateOf(true) }
@@ -419,14 +436,18 @@ fun ReturnJobDialog(
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
     val now = remember { System.currentTimeMillis() }
 
-    // Default Days Used: max of elapsed 24hr cycles and booked rental days on the job sheet,
-    // plus staff can adjust with - / + if the customer returned early or extended.
+    // Daily rental cycle: 8:00 AM today to 8:00 AM tomorrow.
+    // If return exceeds the 8:00 AM cutoff time, extra day(s) rent is automatically applied.
     val elapsedDays = remember(jobSheet.checkoutTime) {
         BabaRepository.calculateDaysUsed(jobSheet.checkoutTime, now)
     }
     val bookedDays = remember(jobSheet.checkoutTime, jobSheet.dueTime) {
         BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
     }
+    val initialCutoffMillis = remember(jobSheet.checkoutTime, bookedDays) {
+        BabaRepository.computeCutoffTimeForDays(jobSheet.checkoutTime, bookedDays)
+    }
+    val exceeded8AmCutoff = now > initialCutoffMillis
     var daysUsed by remember(jobSheet.id) {
         mutableStateOf(maxOf(elapsedDays, bookedDays).coerceAtLeast(1))
     }
@@ -444,6 +465,8 @@ fun ReturnJobDialog(
 
     // Formula: (Days Used × Combined Daily Rate for Returning Machines) - Discount - Deposit Allocated
     val grossRentalFee = daysUsed * dailyRateForReturning
+    val extraDaysCount = (daysUsed - bookedDays).coerceAtLeast(0)
+    val extraRentApplied = extraDaysCount * dailyRateForReturning
     val proratedInitialDiscount = if (initialUnits > 0) {
         (jobSheet.discount * returningQuantity) / initialUnits
     } else {
@@ -460,6 +483,21 @@ fun ReturnJobDialog(
 
     val finalPayable = if (isNoWorkDone) -depositAllocated else (netRentalFee - depositAllocated)
     val isPartialReturn = returningQuantity < activeUnits
+
+    // Keep split inputs synced when finalPayable changes if user hasn't typed custom split yet
+    val targetBillAmount = kotlin.math.abs(finalPayable)
+    LaunchedEffect(targetBillAmount, selectedMethod) {
+        if (selectedMethod == "split") {
+            val currentCash = splitCashInput.toDoubleOrNull() ?: 0.0
+            val currentGpay = splitGpayInput.toDoubleOrNull() ?: 0.0
+            if (kotlin.math.abs((currentCash + currentGpay) - targetBillAmount) > 0.01) {
+                val defaultCash = (targetBillAmount / 2.0).toInt()
+                val defaultGpay = (targetBillAmount.toInt() - defaultCash).coerceAtLeast(0)
+                splitCashInput = defaultCash.toString()
+                splitGpayInput = defaultGpay.toString()
+            }
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -753,6 +791,34 @@ fun ReturnJobDialog(
                             }
                         }
 
+                        if (exceeded8AmCutoff || extraDaysCount > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = BabaOverdueLight,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Exceeded 8:00 AM Cutoff (+$extraDaysCount extra day(s))",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaOverdue,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = "+ ₹${extraRentApplied.toInt()} Extra Rent",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaOverdue
+                                    )
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -828,7 +894,7 @@ fun ReturnJobDialog(
                         errorMessage = null
                     },
                     label = { Text("Manual Closing Discount (₹)") },
-                    placeholder = { Text("e.g. 50 (Deducts from final payable)") },
+                    placeholder = { Text("Enter amount (Deducts from final payable)") },
                     leadingIcon = {
                         Icon(Icons.Default.Percent, contentDescription = null, modifier = Modifier.size(16.dp))
                     },
@@ -883,10 +949,17 @@ fun ReturnJobDialog(
                             else if (finalPayable > 0) BabaOverdue
                             else BabaSuccess
                         )
+                        val modeSummary = if (selectedMethod == "split") {
+                            "SPLIT (Cash ₹${splitCashInput.ifEmpty { "0" }} + GPay ₹${splitGpayInput.ifEmpty { "0" }})"
+                        } else if (selectedMethod == "upi" || selectedMethod == "gpay") {
+                            "GPAY"
+                        } else {
+                            selectedMethod.uppercase()
+                        }
                         Text(
                             text = if (isNoWorkDone) "Full deposit of ₹$depositAllocated refunded to customer (No work done)"
-                            else if (finalPayable > 0) "Collect ₹$finalPayable via ${selectedMethod.uppercase()}"
-                            else if (finalPayable < 0) "Refund ₹${kotlin.math.abs(finalPayable)} to customer via ${selectedMethod.uppercase()}"
+                            else if (finalPayable > 0) "Collect ₹$finalPayable via $modeSummary"
+                            else if (finalPayable < 0) "Refund ₹${kotlin.math.abs(finalPayable)} to customer via $modeSummary"
                             else "No cash or settlement adjustment required (NIL)",
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
@@ -896,9 +969,9 @@ fun ReturnJobDialog(
                     }
                 }
 
-                // Payment Mode Selection: Cash and UPI Checkboxes
+                // Payment Mode Selection: Cash, GPay, and Split Payment
                 Text(
-                    text = "Payment Mode",
+                    text = "Payment Mode (Single or Split Payment)",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = BabaDark
@@ -906,7 +979,7 @@ fun ReturnJobDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Cash Checkbox
@@ -922,25 +995,94 @@ fun ReturnJobDialog(
                             onCheckedChange = { if (it) selectedMethod = "cash" },
                             colors = CheckboxDefaults.colors(checkedColor = BabaRed)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Cash", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                        Text("Cash", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
                     }
 
-                    // UPI Checkbox
+                    // GPay / UPI Checkbox
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { selectedMethod = "upi" }
+                            .clickable { selectedMethod = "gpay" }
                             .padding(vertical = 4.dp)
                             .testTag("checkbox_upi")
                     ) {
                         Checkbox(
-                            checked = selectedMethod == "upi",
-                            onCheckedChange = { if (it) selectedMethod = "upi" },
+                            checked = selectedMethod == "upi" || selectedMethod == "gpay",
+                            onCheckedChange = { if (it) selectedMethod = "gpay" },
                             colors = CheckboxDefaults.colors(checkedColor = BabaRed)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("UPI", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                        Text("GPay", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    }
+
+                    // Split Payment Checkbox (Cash + GPay)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { selectedMethod = "split" }
+                            .padding(vertical = 4.dp)
+                            .testTag("checkbox_split")
+                    ) {
+                        Checkbox(
+                            checked = selectedMethod == "split",
+                            onCheckedChange = { if (it) selectedMethod = "split" },
+                            colors = CheckboxDefaults.colors(checkedColor = BabaRed)
+                        )
+                        Text("Split (Cash + GPay)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
+                    }
+                }
+
+                if (selectedMethod == "split") {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BabaLightGray,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Split Payment Breakdown (Total: ₹${targetBillAmount.toInt()})",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaDark
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = splitCashInput,
+                                    onValueChange = {
+                                        splitCashInput = it.filter { c -> c.isDigit() || c == '.' }
+                                        val cashVal = splitCashInput.toDoubleOrNull() ?: 0.0
+                                        val remGpay = (targetBillAmount - cashVal).coerceAtLeast(0.0)
+                                        splitGpayInput = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                        errorMessage = null
+                                    },
+                                    label = { Text("Cash Amount (₹)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = babaTextFieldColors(),
+                                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.weight(1f).testTag("split_cash_input"),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                OutlinedTextField(
+                                    value = splitGpayInput,
+                                    onValueChange = {
+                                        splitGpayInput = it.filter { c -> c.isDigit() || c == '.' }
+                                        val gpayVal = splitGpayInput.toDoubleOrNull() ?: 0.0
+                                        val remCash = (targetBillAmount - gpayVal).coerceAtLeast(0.0)
+                                        splitCashInput = if (remCash % 1.0 == 0.0) remCash.toInt().toString() else remCash.toString()
+                                        errorMessage = null
+                                    },
+                                    label = { Text("GPay Amount (₹)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = babaTextFieldColors(),
+                                    textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.weight(1f).testTag("split_gpay_input"),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -994,7 +1136,7 @@ fun ReturnJobDialog(
                     },
                     label = { Text(if (isNoWorkDone) "Return Remark * (Reason for No Work)" else "Return Remark *") },
                     placeholder = {
-                        Text(if (isNoWorkDone) "e.g. Returned unused / power issue at site" else "e.g. Machinery tested & returned in good condition")
+                        Text(if (isNoWorkDone) "Returned unused / power issue at site" else "Machinery inspected & received in good condition")
                     },
                     supportingText = {
                         Text(
@@ -1031,7 +1173,7 @@ fun ReturnJobDialog(
                         onClick = {
                             val r = remarkText.trim()
                             if (r.isEmpty()) {
-                                errorMessage = if (isNoWorkDone) "Please enter a remark explaining why no work was done" else "Please enter a return remark (e.g. machine status / condition)"
+                                errorMessage = if (isNoWorkDone) "Please enter a remark explaining why no work was done" else "Please enter a return remark (machine condition / status)"
                                 return@Button
                             }
 
@@ -1041,10 +1183,22 @@ fun ReturnJobDialog(
                                 return@Button
                             }
 
-                            if (isPartialReturn) {
-                                onConfirmPartialReturn(returningQuantity, manualDiscount, selectedMethod, r, daysUsed)
+                            val effectiveMethod = if (selectedMethod == "split") {
+                                val cashAmt = splitCashInput.toDoubleOrNull() ?: 0.0
+                                val gpayAmt = splitGpayInput.toDoubleOrNull() ?: 0.0
+                                if (targetBillAmount > 0 && kotlin.math.abs((cashAmt + gpayAmt) - targetBillAmount) > 0.01) {
+                                    errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal ₹${targetBillAmount.toInt()}"
+                                    return@Button
+                                }
+                                "split:$cashAmt:$gpayAmt"
                             } else {
-                                onConfirmFullReturn(returningQuantity, manualDiscount, selectedMethod, r, daysUsed)
+                                selectedMethod
+                            }
+
+                            if (isPartialReturn) {
+                                onConfirmPartialReturn(returningQuantity, manualDiscount, effectiveMethod, r, daysUsed)
+                            } else {
+                                onConfirmFullReturn(returningQuantity, manualDiscount, effectiveMethod, r, daysUsed)
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
@@ -1076,6 +1230,8 @@ fun AddExtraPaymentDialog(
 ) {
     var amountText by remember { mutableStateOf("") }
     var selectedMethod by remember { mutableStateOf("cash") }
+    var splitCashText by remember { mutableStateOf("") }
+    var splitGpayText by remember { mutableStateOf("") }
     var remarkText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -1137,6 +1293,12 @@ fun AddExtraPaymentDialog(
                     value = amountText,
                     onValueChange = {
                         amountText = it
+                        val totalAmt = it.toDoubleOrNull() ?: 0.0
+                        if (selectedMethod == "split") {
+                            val cashVal = splitCashText.toDoubleOrNull() ?: 0.0
+                            val remGpay = (totalAmt - cashVal).coerceAtLeast(0.0)
+                            splitGpayText = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                        }
                         errorMessage = null
                     },
                     label = { Text("Payment Amount (₹) *") },
@@ -1152,12 +1314,62 @@ fun AddExtraPaymentDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (key, label) ->
+                    listOf("cash" to "Cash", "gpay" to "GPay", "split" to "Split (Cash+GPay)").forEach { (key, label) ->
                         FilterChip(
                             selected = selectedMethod == key,
-                            onClick = { selectedMethod = key },
+                            onClick = {
+                                selectedMethod = key
+                                if (key == "split") {
+                                    val totalAmt = amountText.toDoubleOrNull() ?: 0.0
+                                    val half = (totalAmt / 2.0).toInt()
+                                    splitCashText = half.toString()
+                                    splitGpayText = (totalAmt.toInt() - half).coerceAtLeast(0).toString()
+                                }
+                            },
                             label = { Text(label, fontSize = 11.sp) },
                             modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                if (selectedMethod == "split") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = splitCashText,
+                            onValueChange = {
+                                splitCashText = it.filter { c -> c.isDigit() || c == '.' }
+                                val totalAmt = amountText.toDoubleOrNull() ?: 0.0
+                                val cashVal = splitCashText.toDoubleOrNull() ?: 0.0
+                                val remGpay = (totalAmt - cashVal).coerceAtLeast(0.0)
+                                splitGpayText = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                errorMessage = null
+                            },
+                            label = { Text("Cash (₹)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = babaTextFieldColors(),
+                            textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        OutlinedTextField(
+                            value = splitGpayText,
+                            onValueChange = {
+                                splitGpayText = it.filter { c -> c.isDigit() || c == '.' }
+                                val totalAmt = amountText.toDoubleOrNull() ?: 0.0
+                                val gpayVal = splitGpayText.toDoubleOrNull() ?: 0.0
+                                val remCash = (totalAmt - gpayVal).coerceAtLeast(0.0)
+                                splitCashText = if (remCash % 1.0 == 0.0) remCash.toInt().toString() else remCash.toString()
+                                errorMessage = null
+                            },
+                            label = { Text("GPay (₹)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = babaTextFieldColors(),
+                            textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
                         )
                     }
                 }
@@ -1166,7 +1378,7 @@ fun AddExtraPaymentDialog(
                     value = remarkText,
                     onValueChange = { remarkText = it },
                     label = { Text("Payment Remark") },
-                    placeholder = { Text("e.g. Mid-rental installment") },
+                    placeholder = { Text("Mid-rental installment") },
                     colors = babaTextFieldColors(),
                     textStyle = babaInputTextStyle(),
                     modifier = Modifier.fillMaxWidth().testTag("extra_payment_remark_input"),
@@ -1196,7 +1408,18 @@ fun AddExtraPaymentDialog(
                                 errorMessage = "Please enter a valid amount greater than 0"
                                 return@Button
                             }
-                            onConfirmPayment(amt, selectedMethod, remarkText.trim())
+                            val effectiveMode = if (selectedMethod == "split") {
+                                val cashAmt = splitCashText.toDoubleOrNull() ?: 0.0
+                                val gpayAmt = splitGpayText.toDoubleOrNull() ?: 0.0
+                                if (kotlin.math.abs((cashAmt + gpayAmt) - amt) > 0.01) {
+                                    errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal ₹${amt.toInt()}"
+                                    return@Button
+                                }
+                                "split:$cashAmt:$gpayAmt"
+                            } else {
+                                selectedMethod
+                            }
+                            onConfirmPayment(amt, effectiveMode, remarkText.trim())
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
                         modifier = Modifier.weight(1.3f).testTag("confirm_extra_payment_button"),

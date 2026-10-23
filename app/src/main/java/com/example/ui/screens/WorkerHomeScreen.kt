@@ -37,6 +37,7 @@ fun WorkerHomeScreen(
     onAddPaymentClick: (JobSheetEntity) -> Unit,
     onViewPaymentHistoryClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
+    onExpensesClick: () -> Unit = {},
     onSwitchUser: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -131,6 +132,30 @@ fun WorkerHomeScreen(
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = onExpensesClick,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("worker_expenses_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountBalanceWallet,
+                            contentDescription = "Expenses",
+                            tint = BabaRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Expenses (Log Daily Expense)",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BabaDark
+                        )
                     }
                 }
             }
@@ -341,7 +366,7 @@ fun WorkerJobCard(
             // Machine Name & Qty
             val baseMachineLabel = jobSheet.cleanMachineName
             val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
-                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} billed)"
             } else {
                 baseMachineLabel
             }

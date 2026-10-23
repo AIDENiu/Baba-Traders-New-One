@@ -79,8 +79,8 @@ fun ActivityLogScreen(
                 )
                 listOf(
                     "created" to "New Jobs",
-                    "returned" to "Returns",
-                    "partial_returned" to "Partial Returns",
+                    "returned" to "Billed",
+                    "partial_returned" to "Partial Billed",
                     "payment" to "Payments",
                     "edited" to "Edits",
                     "deleted" to "Deletions"
@@ -189,7 +189,7 @@ fun ActivityLogScreen(
                                         )
                                         Surface(shape = RoundedCornerShape(6.dp), color = actionColor.copy(alpha = 0.15f)) {
                                             Text(
-                                                text = log.action.uppercase(),
+                                                text = if (log.action == "returned" || log.action == "closed") "BILLED" else log.action.uppercase(),
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.Black,
                                                 color = actionColor,

@@ -122,7 +122,7 @@ data class JobSheetEntity(
     val rateUsed: Double,
     val discount: Double = 0.0,
     val depositAmount: Double = 0.0,
-    val billingCycle: String = "24hr",
+    val billingCycle: String = "working_hours",
     val checkoutTime: Long = System.currentTimeMillis(),
     val dueTime: Long = System.currentTimeMillis() + (24 * 3600 * 1000L),
     val returnTime: Long? = null,
@@ -194,3 +194,16 @@ data class DailyCashEntity(
     val cashRefunded: Double = 0.0,
     val notes: String = ""
 ) : Serializable
+
+@Entity(tableName = "expenses")
+data class ExpenseEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val date: String, // "yyyy-MM-dd"
+    val timestamp: Long = System.currentTimeMillis(),
+    val expenseType: String, // Expense Type / Description
+    val amount: Double,
+    val remarks: String = "",
+    val createdBy: String = "",
+    val createdByName: String = ""
+) : Serializable
+

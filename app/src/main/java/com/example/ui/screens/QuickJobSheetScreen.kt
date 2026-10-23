@@ -83,6 +83,7 @@ fun QuickJobSheetScreen(
         onSuccess: (JobSheetEntity) -> Unit,
         onError: (String) -> Unit
     ) -> Unit,
+    onDeleteMachineFromInventory: (machineId: String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
@@ -96,8 +97,8 @@ fun QuickJobSheetScreen(
     var isReturningCustomer by remember { mutableStateOf(false) }
 
     // 2. Multi-Category & Multi-Machine Selection State
-    var selectedCategoryId by remember(categories) {
-        mutableStateOf(categories.firstOrNull()?.id ?: "all")
+    var selectedCategoryId by remember {
+        mutableStateOf("all")
     }
 
     val filteredMachines = remember(machines, selectedCategoryId) {
@@ -122,28 +123,24 @@ fun QuickJobSheetScreen(
     }
     var rentalDays by remember { mutableStateOf(1) }
     var discountText by remember { mutableStateOf("0") }
-    var billingCycle by remember { mutableStateOf("24hr") } // "24hr" or "working_hours"
-    var dueTimeMillis by remember { mutableStateOf(System.currentTimeMillis() + (24 * 60 * 60 * 1000L)) }
+    var billingCycle by remember { mutableStateOf("working_hours") } // 1 Day operation: 8:00 AM today to 8:00 AM tomorrow
+    var dueTimeMillis by remember {
+        mutableStateOf(
+            com.example.data.repository.BabaRepository.computeCutoffTimeForDays(System.currentTimeMillis(), 1)
+        )
+    }
 
-    fun updateDueTimeForDays(days: Int, cycle: String) {
+    fun updateDueTimeForDays(days: Int, cycle: String = "working_hours") {
         val safeDays = days.coerceAtLeast(1)
         rentalDays = safeDays
-        dueTimeMillis = if (cycle == "working_hours") {
-            Calendar.getInstance().apply {
-                add(Calendar.DAY_OF_MONTH, safeDays)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        } else {
-            System.currentTimeMillis() + (safeDays * 24 * 60 * 60 * 1000L)
-        }
+        dueTimeMillis = com.example.data.repository.BabaRepository.computeCutoffTimeForDays(System.currentTimeMillis(), safeDays)
     }
 
     // 4. Security Deposit & ID Photo State (matches screenshot)
     var depositText by remember { mutableStateOf("500") }
-    var depositMethod by remember { mutableStateOf("cash") } // "cash" or "upi"
+    var depositMethod by remember { mutableStateOf("cash") } // "cash", "gpay", or "split"
+    var splitDepositCashText by remember { mutableStateOf("250") }
+    var splitDepositGpayText by remember { mutableStateOf("250") }
     var idPhotoFrontPath by remember { mutableStateOf<String?>(null) }
     var idPhotoBackPath by remember { mutableStateOf<String?>(null) }
     var personPhotoPath by remember { mutableStateOf<String?>(null) }
@@ -152,6 +149,7 @@ fun QuickJobSheetScreen(
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var createdJobSheetForReceipt by remember { mutableStateOf<JobSheetEntity?>(null) }
+    var inventoryMachineToDelete by remember { mutableStateOf<MachineEntity?>(null) }
 
     // Photo Capture Support
     var targetPhotoType by remember { mutableStateOf<String?>(null) } // "front" or "back"
@@ -167,6 +165,8 @@ fun QuickJobSheetScreen(
                 when (targetPhotoType) {
                     "front" -> idPhotoFrontPath = path
                     "back" -> idPhotoBackPath = path
+                    "person" -> personPhotoPath = path
+                    "machine" -> machinePhotoPath = path
                 }
                 Toast.makeText(context, "Photo captured locally", Toast.LENGTH_SHORT).show()
             }
@@ -207,6 +207,8 @@ fun QuickJobSheetScreen(
                     when (targetPhotoType) {
                         "front" -> idPhotoFrontPath = file.absolutePath
                         "back" -> idPhotoBackPath = file.absolutePath
+                        "person" -> personPhotoPath = file.absolutePath
+                        "machine" -> machinePhotoPath = file.absolutePath
                     }
                 } catch (e: Exception) {
                     // ignore
@@ -447,6 +449,33 @@ fun QuickJobSheetScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val isAllSelected = selectedCategoryId == "all"
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isAllSelected) BabaYellowLight else Color.White,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isAllSelected) BabaYellowDark else BabaBorder
+                            ),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { selectedCategoryId = "all" }
+                                .testTag("category_chip_all")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "All (${machines.size})",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = BabaDark
+                                )
+                            }
+                        }
+
                         categories.forEach { cat ->
                             val isSelected = cat.id == selectedCategoryId
                             val countInCat = selectedItemsMap.values
@@ -502,6 +531,38 @@ fun QuickJobSheetScreen(
 
                     // Machine Items List in Selected Category
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (filteredMachines.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = BabaLightGray,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(18.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.HomeRepairService,
+                                        contentDescription = null,
+                                        tint = BabaGray,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                    Text(
+                                        text = if (machines.isEmpty()) "No machines in inventory yet" else "No machines in this category",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = BabaDark
+                                    )
+                                    Text(
+                                        text = "Add your shop's machines and daily rates in the Machinery & Rates section.",
+                                        fontSize = 11.sp,
+                                        color = BabaGray
+                                    )
+                                }
+                            }
+                        }
                         filteredMachines.forEach { mach ->
                             val existingItem = selectedItemsMap[mach.id]
                             val isSelected = existingItem != null
@@ -576,17 +637,49 @@ fun QuickJobSheetScreen(
                                             )
                                         }
 
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = if (mach.availableQty > 0) BabaSuccessLight else BabaOverdueLight
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Text(
-                                                text = if (mach.availableQty > 0) "${mach.availableQty} Avail" else "Out of Stock",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (mach.availableQty > 0) BabaSuccess else BabaOverdue,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = if (mach.availableQty > 0) BabaSuccessLight else BabaOverdueLight
+                                            ) {
+                                                Text(
+                                                    text = if (mach.availableQty > 0) "${mach.availableQty} Avail" else "Out of Stock",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (mach.availableQty > 0) BabaSuccess else BabaOverdue,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
+
+                                            if (currentUser.role == "owner") {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = BabaOverdueLight.copy(alpha = 0.5f),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue.copy(alpha = 0.4f)),
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .clickable {
+                                                            inventoryMachineToDelete = mach
+                                                        }
+                                                        .testTag("quick_delete_inventory_machine_${mach.id}")
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.DeleteOutline,
+                                                            contentDescription = "Delete ${mach.name}",
+                                                            tint = BabaOverdue,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
 
@@ -620,6 +713,36 @@ fun QuickJobSheetScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = BabaOverdueLight,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue.copy(alpha = 0.4f)),
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable {
+                                                            selectedItemsMap.remove(mach.id)
+                                                        }
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.DeleteOutline,
+                                                            contentDescription = "Remove Machine",
+                                                            tint = BabaOverdue,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Text(
+                                                            text = "Delete",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = BabaOverdue
+                                                        )
+                                                    }
+                                                }
+
                                                 Surface(
                                                     shape = CircleShape,
                                                     color = Color.White,
@@ -698,30 +821,46 @@ fun QuickJobSheetScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "Selected Machines ($totalSelectedUnits unit(s) in ${selectedItemsMap.size} item(s))",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BabaDark,
-                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                    )
-                                    Column(horizontalAlignment = Alignment.End) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                         Text(
-                                            text = "1 Day: ₹${combinedDailyRate.toInt()}/day",
+                                            text = "Added Machines ($totalSelectedUnits unit(s) in ${selectedItemsMap.size} item(s))",
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = BabaRed,
-                                            maxLines = 1,
-                                            softWrap = false
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaDark
                                         )
-                                        if (rentalDays > 1) {
+                                        Text(
+                                            text = "1 Day: ₹${combinedDailyRate.toInt()}/day" + if (rentalDays > 1) " • $rentalDays Days: ₹${(combinedDailyRate * rentalDays).toInt()}" else "",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaRed
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = BabaOverdueLight,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue.copy(alpha = 0.4f)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { selectedItemsMap.clear() }
+                                            .testTag("clear_all_selected_machines_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteSweep,
+                                                contentDescription = "Clear All",
+                                                tint = BabaOverdue,
+                                                modifier = Modifier.size(14.dp)
+                                            )
                                             Text(
-                                                text = "$rentalDays Days: ₹${(combinedDailyRate * rentalDays).toInt()}",
-                                                fontSize = 11.sp,
+                                                text = "Clear All",
+                                                fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = BabaSuccess,
-                                                maxLines = 1,
-                                                softWrap = false
+                                                color = BabaOverdue
                                             )
                                         }
                                     }
@@ -744,7 +883,7 @@ fun QuickJobSheetScreen(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = item.machineName,
+                                                    text = "${item.machineName} (×${item.quantity})",
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = BabaDark
@@ -757,7 +896,7 @@ fun QuickJobSheetScreen(
                                             }
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
                                                 Column(horizontalAlignment = Alignment.End) {
                                                     Text(
@@ -775,16 +914,33 @@ fun QuickJobSheetScreen(
                                                         )
                                                     }
                                                 }
-                                                IconButton(
-                                                    onClick = { selectedItemsMap.remove(item.machineId) },
-                                                    modifier = Modifier.size(24.dp)
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = BabaOverdueLight,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue.copy(alpha = 0.4f)),
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable { selectedItemsMap.remove(item.machineId) }
+                                                        .testTag("remove_added_machine_${item.machineId}")
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Close,
-                                                        contentDescription = "Remove ${item.machineName}",
-                                                        tint = BabaOverdue,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.DeleteOutline,
+                                                            contentDescription = "Delete ${item.machineName}",
+                                                            tint = BabaOverdue,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Text(
+                                                            text = "Delete",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = BabaOverdue
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1022,55 +1178,37 @@ fun QuickJobSheetScreen(
                     Text("Billing Cycle Policy", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BabaDark)
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // 24-Hour Cycle vs Working Hours cards side by side
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    // 1 Day operation: 8:00 AM today to 8:00 AM tomorrow (24-Hour option removed)
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(
+                                width = 2.dp,
+                                color = BabaRed,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                billingCycle = "working_hours"
+                                updateDueTimeForDays(rentalDays, "working_hours")
+                            },
+                        color = Color(0xFFFFF0F0)
                     ) {
-                        // 24-Hour Cycle
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(
-                                    width = if (billingCycle == "24hr") 2.dp else 1.dp,
-                                    color = if (billingCycle == "24hr") BabaRed else BabaBorder,
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                .clickable {
-                                    billingCycle = "24hr"
-                                    updateDueTimeForDays(rentalDays, "24hr")
-                                },
-                            color = if (billingCycle == "24hr") Color(0xFFFFF0F0) else Color.White
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("24-Hour Cycle", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text("Due +${rentalDays * 24} hours from checkout", fontSize = 10.5.sp, color = BabaGray)
-                            }
-                        }
-
-                        // 1 Day operation
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(
-                                    width = if (billingCycle == "working_hours") 2.dp else 1.dp,
-                                    color = if (billingCycle == "working_hours") BabaRed else BabaBorder,
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                .clickable {
-                                    billingCycle = "working_hours"
-                                    updateDueTimeForDays(rentalDays, "working_hours")
-                                },
-                            color = if (billingCycle == "working_hours") Color(0xFFFFF0F0) else Color.White
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("1 Day operation", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text("12:00 AM – 12:00 AM", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.Medium)
-                            }
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("1 Day operation", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BabaDark)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "8:00 AM today to 8:00 AM tomorrow",
+                                fontSize = 11.5.sp,
+                                color = BabaRedDark,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Extra rent is automatically applied if rental exceeds the 8:00 AM cutoff time.",
+                                fontSize = 10.sp,
+                                color = BabaGray
+                            )
                         }
                     }
 
@@ -1299,7 +1437,7 @@ fun QuickJobSheetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Security Deposit (₹) and Deposit Method (Cash / UPI)
+                    // Security Deposit (₹) and Deposit Method (Cash / GPay / Split)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1307,7 +1445,15 @@ fun QuickJobSheetScreen(
                     ) {
                         OutlinedTextField(
                             value = depositText,
-                            onValueChange = { depositText = it },
+                            onValueChange = {
+                                depositText = it
+                                val totalDep = it.toDoubleOrNull() ?: 0.0
+                                val currentCash = splitDepositCashText.toDoubleOrNull() ?: 0.0
+                                if (depositMethod == "split") {
+                                    val remGpay = (totalDep - currentCash).coerceAtLeast(0.0)
+                                    splitDepositGpayText = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                }
+                            },
                             label = { Text("Security Deposit (₹)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = babaTextFieldColors(),
@@ -1316,10 +1462,10 @@ fun QuickJobSheetScreen(
                             shape = RoundedCornerShape(10.dp)
                         )
 
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1.2f)) {
                             Text("Deposit Method", fontSize = 11.sp, color = BabaGray, fontWeight = FontWeight.Medium)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                                 // Cash Button
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
@@ -1339,37 +1485,126 @@ fun QuickJobSheetScreen(
                                     ) {
                                         Text(
                                             text = "Cash",
-                                            fontSize = 13.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = BabaDark
                                         )
                                     }
                                 }
 
-                                // UPI Button
+                                // GPay Button
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (depositMethod == "upi") BabaYellowLight else Color.White,
+                                    color = if (depositMethod == "upi" || depositMethod == "gpay") BabaYellowLight else Color.White,
                                     border = androidx.compose.foundation.BorderStroke(
                                         1.dp,
-                                        if (depositMethod == "upi") BabaYellowDark else BabaBorder
+                                        if (depositMethod == "upi" || depositMethod == "gpay") BabaYellowDark else BabaBorder
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .clickable { depositMethod = "upi" }
+                                        .clickable { depositMethod = "gpay" }
                                 ) {
                                     Box(
                                         modifier = Modifier.padding(vertical = 12.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = "UPI",
-                                            fontSize = 13.sp,
+                                            text = "GPay",
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = BabaDark
                                         )
                                     }
+                                }
+
+                                // Split Button
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (depositMethod == "split") BabaYellowLight else Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (depositMethod == "split") BabaYellowDark else BabaBorder
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            depositMethod = "split"
+                                            val totalDep = depositText.toDoubleOrNull() ?: 0.0
+                                            val half = (totalDep / 2.0).toInt()
+                                            splitDepositCashText = half.toString()
+                                            splitDepositGpayText = (totalDep.toInt() - half).coerceAtLeast(0).toString()
+                                        }
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Split",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaDark
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (depositMethod == "split") {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = BabaLightGray,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "Split Deposit Breakdown (Cash + GPay)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BabaDark
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = splitDepositCashText,
+                                        onValueChange = {
+                                            splitDepositCashText = it.filter { c -> c.isDigit() || c == '.' }
+                                            val totalDep = depositText.toDoubleOrNull() ?: 0.0
+                                            val cashVal = splitDepositCashText.toDoubleOrNull() ?: 0.0
+                                            val gpayVal = (totalDep - cashVal).coerceAtLeast(0.0)
+                                            splitDepositGpayText = if (gpayVal % 1.0 == 0.0) gpayVal.toInt().toString() else gpayVal.toString()
+                                        },
+                                        label = { Text("Cash (₹)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = babaTextFieldColors(),
+                                        textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = splitDepositGpayText,
+                                        onValueChange = {
+                                            splitDepositGpayText = it.filter { c -> c.isDigit() || c == '.' }
+                                            val totalDep = depositText.toDoubleOrNull() ?: 0.0
+                                            val gpayVal = splitDepositGpayText.toDoubleOrNull() ?: 0.0
+                                            val cashVal = (totalDep - gpayVal).coerceAtLeast(0.0)
+                                            splitDepositCashText = if (cashVal % 1.0 == 0.0) cashVal.toInt().toString() else cashVal.toString()
+                                        },
+                                        label = { Text("GPay (₹)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = babaTextFieldColors(),
+                                        textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
                                 }
                             }
                         }
@@ -1425,6 +1660,46 @@ fun QuickJobSheetScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Directly below ID Photo: Person's Photo
+                    Text(
+                        text = "Person's Photo",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BabaDark
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    IdPhotoUploadBox(
+                        title = "Person's Photo",
+                        imagePath = personPhotoPath,
+                        onCameraClick = { startCameraFor("person") },
+                        onGalleryClick = { startGalleryFor("person") },
+                        onPreviewClick = { previewPhotoPath = personPhotoPath },
+                        onRemoveClick = { personPhotoPath = null },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Directly below Person's Photo: Machine's Photo
+                    Text(
+                        text = "Machine's Photo",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BabaDark
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    IdPhotoUploadBox(
+                        title = "Machine's Photo",
+                        imagePath = machinePhotoPath,
+                        onCameraClick = { startCameraFor("machine") },
+                        onGalleryClick = { startGalleryFor("machine") },
+                        onPreviewClick = { previewPhotoPath = machinePhotoPath },
+                        onRemoveClick = { machinePhotoPath = null },
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -1494,7 +1769,7 @@ fun QuickJobSheetScreen(
                     }
 
                     val itemsList = selectedItemsMap.values.toList()
-                    val exactDueTimeMillis = System.currentTimeMillis() + (rentalDays.coerceAtLeast(1) * 24 * 60 * 60 * 1000L)
+                    val exactDueTimeMillis = dueTimeMillis
 
                     val customer = CustomerEntity(
                         id = "cust_" + (cleanPhone.ifEmpty { UUID.randomUUID().toString() }),
@@ -1505,12 +1780,24 @@ fun QuickJobSheetScreen(
                         idPhotoBackPath = idPhotoBackPath
                     )
 
+                    val effectiveDepositMethod = if (depositMethod == "split") {
+                        val cashAmt = splitDepositCashText.toDoubleOrNull() ?: 0.0
+                        val gpayAmt = splitDepositGpayText.toDoubleOrNull() ?: 0.0
+                        if (kotlin.math.abs((cashAmt + gpayAmt) - deposit) > 0.01) {
+                            errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal Deposit (₹${deposit.toInt()})"
+                            return@Button
+                        }
+                        "split:$cashAmt:$gpayAmt"
+                    } else {
+                        depositMethod
+                    }
+
                     onCreateJobSheet(
                         customer,
                         itemsList,
                         discount,
                         deposit,
-                        depositMethod,
+                        effectiveDepositMethod,
                         billingCycle,
                         currentUser,
                         currentUser,
@@ -1599,6 +1886,61 @@ fun QuickJobSheetScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Close", color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete Inventory Machine Confirmation Dialog (for Owner in Step 2)
+    if (inventoryMachineToDelete != null) {
+        val targetMachine = inventoryMachineToDelete!!
+        Dialog(onDismissRequest = { inventoryMachineToDelete = null }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Delete Machine from Inventory?",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 16.sp,
+                        color = BabaDark
+                    )
+                    Text(
+                        text = "Are you sure you want to permanently remove \"${targetMachine.name}\" (₹${targetMachine.currentRate.toInt()}/day) from the machinery list?",
+                        fontSize = 13.sp,
+                        color = BabaGray
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { inventoryMachineToDelete = null },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Cancel", color = BabaDark)
+                        }
+                        Button(
+                            onClick = {
+                                selectedItemsMap.remove(targetMachine.id)
+                                onDeleteMachineFromInventory(targetMachine.id)
+                                inventoryMachineToDelete = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaOverdue),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

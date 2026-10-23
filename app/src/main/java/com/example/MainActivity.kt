@@ -19,12 +19,14 @@ import com.example.data.model.JobSheetEntity
 import com.example.data.model.SelectedMachineItem
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.components.AddExtraPaymentDialog
+import com.example.ui.components.InAppPdfViewerDialog
 import com.example.ui.components.PaymentHistoryDialog
 import com.example.ui.components.ReceiptDialog
 import com.example.ui.components.ReturnJobDialog
 import com.example.ui.screens.*
 import com.example.ui.theme.BabaJobSheetTheme
 import com.example.ui.viewmodel.BabaViewModel
+import com.example.util.PdfGenerator
 
 class MainActivity : ComponentActivity() {
 
@@ -62,8 +64,10 @@ fun BabaAppContent(viewModel: BabaViewModel) {
     val customers by viewModel.customers.collectAsStateWithLifecycle()
     val activityLogs by viewModel.activityLogs.collectAsStateWithLifecycle()
     val payments by viewModel.payments.collectAsStateWithLifecycle()
+    val expenses by viewModel.expenses.collectAsStateWithLifecycle()
     val dashboardStats by viewModel.dashboardStats.collectAsStateWithLifecycle()
     val alertNotification by viewModel.ownerAlert.collectAsStateWithLifecycle()
+    val activePdfPreview by PdfGenerator.activePdfPreview.collectAsStateWithLifecycle()
 
     // Navigation Screen State
     var currentScreen by remember { mutableStateOf("auth") }
@@ -105,6 +109,14 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                             }
                         )
+                    },
+                    onOwnerPhoneVerified = { owner, verifiedPhone ->
+                        viewModel.updateOwnerRegisteredPhone(
+                            owner = owner,
+                            newPhone = verifiedPhone,
+                            onSuccess = { },
+                            onError = { }
+                        )
                     }
                 )
             }
@@ -123,6 +135,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onAddPaymentClick = { job -> jobToAddPayment = job },
                         onViewPaymentHistoryClick = { job -> jobForPaymentHistory = job },
                         onViewReceiptClick = { job -> jobForReceipt = job },
+                        onExpensesClick = { currentScreen = "expenses" },
                         onSwitchUser = {
                             viewModel.logout()
                             currentScreen = "auth"
@@ -148,6 +161,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onNavigateToReports = { currentScreen = "reports" },
                         onNavigateToStaff = { currentScreen = "manage_staff" },
                         onNavigateToStaffPerformance = { currentScreen = "staff_performance" },
+                        onNavigateToExpenses = { currentScreen = "expenses" },
                         onNavigateToActivityLog = { currentScreen = "activity_log" },
                         onReturnJobClick = { job ->
                             jobToReturn = job
@@ -189,6 +203,17 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 context = context,
                                 onSuccess = onSuccess,
                                 onError = onError
+                            )
+                        },
+                        onDeleteMachineFromInventory = { machineId ->
+                            viewModel.deleteMachine(
+                                machineId = machineId,
+                                onSuccess = {
+                                    Toast.makeText(context, "Machine deleted from inventory", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
                             )
                         },
                         onNavigateBack = {
@@ -247,6 +272,27 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 totalQty = totalQty,
                                 onSuccess = {
                                     Toast.makeText(context, "Pricing updated successfully", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onDeleteMachine = { machineId ->
+                            viewModel.deleteMachine(
+                                machineId = machineId,
+                                onSuccess = {
+                                    Toast.makeText(context, "Machine deleted from inventory", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onDeleteAllMachines = {
+                            viewModel.deleteAllMachines(
+                                onSuccess = {
+                                    Toast.makeText(context, "All machines deleted from inventory", Toast.LENGTH_SHORT).show()
                                 },
                                 onError = { err ->
                                     Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
@@ -371,6 +417,38 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                     }
                 )
             }
+
+            "expenses" -> {
+                val user = currentUser
+                if (user != null) {
+                    ExpensesScreen(
+                        expenses = expenses,
+                        currentUser = user,
+                        onAddExpense = { date, timestamp, type, amount, remarks, onSuccess, onError ->
+                            viewModel.addExpense(
+                                date = date,
+                                timestamp = timestamp,
+                                expenseType = type,
+                                amount = amount,
+                                remarks = remarks,
+                                onSuccess = onSuccess,
+                                onError = onError
+                            )
+                        },
+                        onDeleteExpense = { id ->
+                            viewModel.deleteExpense(
+                                expenseId = id,
+                                onSuccess = {
+                                    Toast.makeText(context, "Expense entry deleted", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onNavigateBack = {
+                            currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
+                        }
+                    )
+                }
+            }
         }
 
         // Shared Return Dialog
@@ -468,6 +546,14 @@ fun BabaAppContent(viewModel: BabaViewModel) {
             ReceiptDialog(
                 jobSheet = jobForReceipt!!,
                 onDismiss = { jobForReceipt = null }
+            )
+        }
+
+        // Global In-App PDF Document Viewer Dialog (for Job Sheet Invoices & Financial Reports)
+        if (activePdfPreview != null) {
+            InAppPdfViewerDialog(
+                request = activePdfPreview!!,
+                onDismiss = { PdfGenerator.dismissPdfPreview() }
             )
         }
     }

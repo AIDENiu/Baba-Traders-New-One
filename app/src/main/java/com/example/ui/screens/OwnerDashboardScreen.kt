@@ -49,6 +49,7 @@ fun OwnerDashboardScreen(
     onNavigateToReports: () -> Unit,
     onNavigateToStaff: () -> Unit,
     onNavigateToStaffPerformance: () -> Unit = {},
+    onNavigateToExpenses: () -> Unit = {},
     onNavigateToActivityLog: () -> Unit,
     onReturnJobClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
@@ -273,6 +274,14 @@ fun OwnerDashboardScreen(
                         onClick = onNavigateToReports
                     )
                     ShopActionTile(
+                        title = "Expenses",
+                        subtitle = "Daily & monthly",
+                        icon = Icons.Default.AccountBalanceWallet,
+                        color = BabaOverdue,
+                        modifier = Modifier.weight(1f),
+                        onClick = onNavigateToExpenses
+                    )
+                    ShopActionTile(
                         title = "Manage Staff",
                         subtitle = "Workers & PINs",
                         icon = Icons.Default.Badge,
@@ -280,6 +289,14 @@ fun OwnerDashboardScreen(
                         modifier = Modifier.weight(1f),
                         onClick = onNavigateToStaff
                     )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ShopActionTile(
                         title = "Activity Log",
                         subtitle = "Staff audit trail",
@@ -439,7 +456,7 @@ fun OwnerDashboardScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                             Text(
                                                 text = "${job.customerName} • ${job.cleanMachineName}",
                                                 fontWeight = FontWeight.Bold,

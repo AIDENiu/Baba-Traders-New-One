@@ -13,6 +13,7 @@ import com.example.data.firebase.FirestoreSyncService
 import java.io.File
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.CustomerEntity
+import com.example.data.model.ExpenseEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.MachineCategoryEntity
 import com.example.data.model.MachineEntity
@@ -104,6 +105,9 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val payments: StateFlow<List<PaymentEntity>> = repository.allPayments
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val expenses: StateFlow<List<ExpenseEntity>> = repository.allExpenses
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Combined Dashboard Stats with Staff Accountability & Daily vs Monthly split
@@ -535,6 +539,7 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                     modelOrSpecs = modelOrSpecs
                 )
                 repository.insertMachine(machine)
+                syncService.pushMachine(machine)
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to add machine")
@@ -565,9 +570,41 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
                     availableQty = newAvailable
                 )
                 repository.updateMachine(updated)
+                syncService.pushMachine(updated)
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update machine")
+            }
+        }
+    }
+
+    fun deleteMachine(
+        machineId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.deleteMachine(machineId)
+                syncService.deleteMachineFromCloud(machineId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete machine")
+            }
+        }
+    }
+
+    fun deleteAllMachines(
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.deleteAllMachines()
+                syncService.deleteAllMachinesFromCloud()
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete all machines")
             }
         }
     }
@@ -735,5 +772,60 @@ class BabaViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getOpeningCashForDate(dateStr: String): Double {
         return repository.getOpeningCashForDate(dateStr)
+    }
+
+    // --- Expenses Module ---
+    fun addExpense(
+        date: String,
+        timestamp: Long,
+        expenseType: String,
+        amount: Double,
+        remarks: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val user = _currentUser.value
+        if (user == null) {
+            onError("Please log in first")
+            return
+        }
+        if (expenseType.isBlank()) {
+            onError("Please enter Expense Type / Description")
+            return
+        }
+        if (amount <= 0) {
+            onError("Please enter a valid expense amount greater than 0")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                repository.addExpense(
+                    date = date,
+                    timestamp = timestamp,
+                    expenseType = expenseType,
+                    amount = amount,
+                    remarks = remarks,
+                    user = user
+                )
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save expense")
+            }
+        }
+    }
+
+    fun deleteExpense(
+        expenseId: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.deleteExpense(expenseId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete expense")
+            }
+        }
     }
 }

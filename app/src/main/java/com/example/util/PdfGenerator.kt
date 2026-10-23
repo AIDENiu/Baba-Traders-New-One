@@ -1,6 +1,8 @@
 package com.example.util
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -11,11 +13,18 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.PaymentEntity
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -23,7 +32,22 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
+data class PdfPreviewRequest(
+    val file: File,
+    val title: String,
+    val subtitle: String,
+    val shareSubject: String,
+    val shareText: String
+)
+
 object PdfGenerator {
+
+    private val _activePdfPreview = MutableStateFlow<PdfPreviewRequest?>(null)
+    val activePdfPreview: StateFlow<PdfPreviewRequest?> = _activePdfPreview.asStateFlow()
+
+    fun dismissPdfPreview() {
+        _activePdfPreview.value = null
+    }
 
     // Standard A4 dimensions in PostScript points (72 points per inch)
     private const val PAGE_WIDTH = 595
@@ -118,7 +142,7 @@ object PdfGenerator {
         canvas.drawText("Job Sheet ID: ${jobSheet.id}", 48f, y + 26f, paint)
 
         // Status Pill Badge
-        val statusText = jobSheet.status.uppercase(Locale.getDefault())
+        val statusText = if (jobSheet.status == "returned" || jobSheet.status == "closed") "BILLED" else jobSheet.status.uppercase(Locale.getDefault())
         val statusColor = when (jobSheet.status) {
             "returned", "closed" -> COLOR_SUCCESS
             "overdue" -> COLOR_OVERDUE
@@ -192,9 +216,9 @@ object PdfGenerator {
         val billingStaff = jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }
         canvas.drawText("Billing Operator: $billingStaff", 36f + colWidth + 26f, y + 34f, paint)
         canvas.drawText("Yard Handler: ${jobSheet.handledByName}", 36f + colWidth + 26f, y + 48f, paint)
-        val returnStaff = if (jobSheet.returnedByName.isNotBlank()) jobSheet.returnedByName else "Pending return"
-        canvas.drawText("Returned To: $returnStaff", 36f + colWidth + 26f, y + 62f, paint)
-        val cycleDesc = if (jobSheet.billingCycle == "24hr") "24-Hour Rolling Cycle" else "1 Day operation"
+        val returnStaff = if (jobSheet.returnedByName.isNotBlank()) jobSheet.returnedByName else "Pending billing"
+        canvas.drawText("Billed By: $returnStaff", 36f + colWidth + 26f, y + 62f, paint)
+        val cycleDesc = "8:00 AM today to 8:00 AM tomorrow"
         canvas.drawText("Policy: $cycleDesc", 36f + colWidth + 26f, y + 76f, paint)
 
         y += colHeight + 16f
@@ -625,7 +649,8 @@ object PdfGenerator {
                 "overdue" -> COLOR_OVERDUE
                 else -> COLOR_PRIMARY
             }
-            canvas.drawText(job.status.uppercase(Locale.getDefault()), 420f, y + 14f, paint)
+            val jobStatusDisplay = if (job.status == "returned" || job.status == "closed") "BILLED" else job.status.uppercase(Locale.getDefault())
+            canvas.drawText(jobStatusDisplay, 420f, y + 14f, paint)
 
             paint.color = COLOR_DARK
             val amountStr = if (job.status == "returned" || job.status == "closed") "₹${job.totalRentalFee.toInt()}" else "₹${job.depositAmount.toInt()}"
@@ -696,49 +721,134 @@ object PdfGenerator {
     }
 
     /**
-     * Shares a Job Sheet PDF via system share sheet (WhatsApp, Email, etc.).
+     * Shares any generated PDF file via system share sheet (WhatsApp, Email, Drive, etc.)
+     * with proper FileProvider authority and ClipData read permissions.
      */
-    fun shareJobSheetPdf(context: Context, jobSheet: JobSheetEntity) {
+    fun sharePdfFile(
+        context: Context,
+        file: File,
+        subject: String,
+        text: String
+    ) {
         try {
-            val file = generateJobSheetPdf(context, jobSheet)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/pdf"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "BABA Traders Rental Invoice - ${jobSheet.id}")
-                putExtra(
-                    Intent.EXTRA_TEXT,
-                    "Rental Job Sheet & Invoice for ${jobSheet.customerName} (${jobSheet.cleanMachineName}) from BABA Traders."
-                )
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                putExtra(Intent.EXTRA_TEXT, text)
+                clipData = ClipData.newRawUri(file.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "Share Job Sheet PDF"))
+            val chooser = Intent.createChooser(intent, "Share PDF Document").apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
         } catch (e: Exception) {
             Toast.makeText(context, "Failed to share PDF: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     /**
-     * Opens Job Sheet PDF in system PDF viewer.
+     * Opens a generated PDF file in an external PDF viewer app if installed.
      */
-    fun viewJobSheetPdf(context: Context, jobSheet: JobSheetEntity) {
+    fun openPdfExternally(
+        context: Context,
+        file: File,
+        subject: String,
+        text: String
+    ) {
         try {
-            val file = generateJobSheetPdf(context, jobSheet)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/pdf")
+                clipData = ClipData.newRawUri(file.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
-            // Fallback: no dedicated PDF viewer installed, offer share chooser
-            shareJobSheetPdf(context, jobSheet)
-            Toast.makeText(context, "No PDF viewer found. Opening share menu.", Toast.LENGTH_SHORT).show()
+            sharePdfFile(context, file, subject, text)
+            Toast.makeText(context, "No external PDF app installed. Opening Share menu instead.", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "Unable to open PDF: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Unable to open external PDF app: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Saves the PDF file directly to the device's public Downloads folder.
+     */
+    fun savePdfToDownloads(context: Context, file: File): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BABA_Traders")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    ?: throw IllegalStateException("Could not create file in Downloads")
+                resolver.openOutputStream(uri)?.use { outStream ->
+                    FileInputStream(file).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                contentValues.clear()
+                contentValues.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
+                Toast.makeText(context, "PDF saved to Downloads/BABA_Traders/${file.name}", Toast.LENGTH_LONG).show()
+                true
+            } else {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                val destFile = File(downloadsDir, file.name)
+                file.copyTo(destFile, overwrite = true)
+                Toast.makeText(context, "PDF saved to Downloads/${file.name}", Toast.LENGTH_LONG).show()
+                true
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Failed to save PDF: ${e.message}", Toast.LENGTH_LONG).show()
+            false
+        }
+    }
+
+    /**
+     * Shares a Job Sheet PDF via system share sheet (WhatsApp, Email, etc.).
+     */
+    fun shareJobSheetPdf(context: Context, jobSheet: JobSheetEntity) {
+        try {
+            val file = generateJobSheetPdf(context, jobSheet)
+            sharePdfFile(
+                context = context,
+                file = file,
+                subject = "BABA Traders Rental Invoice - ${jobSheet.id}",
+                text = "Rental Job Sheet & Invoice for ${jobSheet.customerName} (${jobSheet.cleanMachineName}) from BABA Traders."
+            )
+        } catch (e: Exception) {
+            Toast.makeText(context, "Failed to share PDF: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Opens Job Sheet PDF in the built-in high-resolution In-App PDF Viewer
+     * (with Share, Download, Zoom, and External App options).
+     */
+    fun viewJobSheetPdf(context: Context, jobSheet: JobSheetEntity) {
+        try {
+            val file = generateJobSheetPdf(context, jobSheet)
+            _activePdfPreview.value = PdfPreviewRequest(
+                file = file,
+                title = "Job Sheet Invoice • ${jobSheet.id}",
+                subtitle = "${jobSheet.customerName} • ${jobSheet.cleanMachineName}",
+                shareSubject = "BABA Traders Rental Invoice - ${jobSheet.id}",
+                shareText = "Rental Job Sheet & Invoice for ${jobSheet.customerName} (${jobSheet.cleanMachineName}) from BABA Traders."
+            )
+        } catch (e: Exception) {
+            Toast.makeText(context, "Unable to generate PDF preview: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -754,26 +864,19 @@ object PdfGenerator {
     ) {
         try {
             val file = generateReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "BABA Traders Financial Performance Report")
-                putExtra(
-                    Intent.EXTRA_TEXT,
-                    "Financial & Rental Audit Statement from BABA Traders & Engineering Hardwares."
-                )
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(Intent.createChooser(intent, "Share Report PDF"))
+            sharePdfFile(
+                context = context,
+                file = file,
+                subject = "BABA Traders Financial Performance Report",
+                text = "Financial & Rental Audit Statement from BABA Traders & Engineering Hardwares."
+            )
         } catch (e: Exception) {
             Toast.makeText(context, "Failed to share report PDF: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     /**
-     * Views Financial Performance PDF Report.
+     * Opens Financial Performance PDF Report in the built-in In-App PDF Viewer.
      */
     fun viewReportPdf(
         context: Context,
@@ -784,17 +887,13 @@ object PdfGenerator {
     ) {
         try {
             val file = generateReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/pdf")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
-            shareReportPdf(context, jobSheets, payments, generatedByName, periodTitle)
-            Toast.makeText(context, "No PDF viewer found. Opening share menu.", Toast.LENGTH_SHORT).show()
+            _activePdfPreview.value = PdfPreviewRequest(
+                file = file,
+                title = periodTitle ?: "Financial & Rental Audit PDF",
+                subtitle = "Generated by $generatedByName • ${file.name}",
+                shareSubject = "BABA Traders Financial Performance Report",
+                shareText = "Financial & Rental Audit Statement from BABA Traders & Engineering Hardwares."
+            )
         } catch (e: Exception) {
             Toast.makeText(context, "Unable to open report PDF: ${e.message}", Toast.LENGTH_LONG).show()
         }

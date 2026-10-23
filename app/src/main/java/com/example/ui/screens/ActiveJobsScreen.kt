@@ -146,7 +146,7 @@ fun ActiveJobsScreen(
                     onClick = { selectedTab = 2 },
                     text = {
                         Text(
-                            text = "Returned (${nonDeleted.count { it.status == "returned" || it.status == "closed" }})",
+                            text = "Billed (${nonDeleted.count { it.status == "returned" || it.status == "closed" }})",
                             fontSize = 12.sp,
                             fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal
                         )
@@ -255,7 +255,7 @@ fun OrderCard(
                 ) {
                     Text(
                         text = when (jobSheet.status) {
-                            "returned", "closed" -> "RETURNED"
+                            "returned", "closed" -> "BILLED"
                             else -> if (isOverdue) "OVERDUE" else "ACTIVE"
                         },
                         fontSize = 10.sp,
@@ -273,7 +273,7 @@ fun OrderCard(
 
             val baseMachineLabel = jobSheet.cleanMachineName
             val quantityDisplay = if (jobSheet.initialQuantity > 0 && jobSheet.returnedQuantity > 0) {
-                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} returned)"
+                "$baseMachineLabel (${jobSheet.returnedQuantity} of ${jobSheet.initialQuantity} billed)"
             } else {
                 baseMachineLabel
             }
@@ -304,7 +304,7 @@ fun OrderCard(
             // Attribution Tag
             val isJobClosed = jobSheet.status == "returned" || jobSheet.status == "closed"
             val attributionText = if (isJobClosed && jobSheet.returnedByName.isNotEmpty()) {
-                "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}, returned to ${jobSheet.returnedByName}"
+                "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}, billed by ${jobSheet.returnedByName}"
             } else {
                 "${jobSheet.customerName}'s machine — checked out by ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}"
             }

@@ -938,7 +938,7 @@ private fun DetailedStaffPerformanceCard(
                                                         RoleActionBadge("HANDOVER", BabaRedLight, BabaRed)
                                                     }
                                                     if (didReturn) {
-                                                        RoleActionBadge("RETURNED", BabaYellowLight, BabaYellowDark)
+                                                        RoleActionBadge("BILLED", BabaYellowLight, BabaYellowDark)
                                                     }
                                                 }
                                                 TextButton(

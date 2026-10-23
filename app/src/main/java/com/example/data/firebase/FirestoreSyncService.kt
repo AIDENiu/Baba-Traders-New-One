@@ -154,9 +154,24 @@ class FirestoreSyncService(
                 }
                 if (snapshot != null) {
                     scope.launch(Dispatchers.IO) {
+                        for (change in snapshot.documentChanges) {
+                            if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) {
+                                try {
+                                    roomDb.machineDao().deleteMachineById(change.document.id)
+                                } catch (e: Exception) {
+                                    Log.e("FirestoreSync", "Error deleting removed machine doc: ${change.document.id}", e)
+                                }
+                            }
+                        }
+                        val legacySampleIds = setOf("mach_1", "mach_2", "mach_3", "mach_4", "mach_5", "mach_6")
                         for (doc in snapshot.documents) {
                             try {
                                 val id = doc.id
+                                if (id in legacySampleIds) {
+                                    fs.collection(machinesPath).document(id).delete()
+                                    roomDb.machineDao().deleteMachineById(id)
+                                    continue
+                                }
                                 val categoryId = doc.getString("categoryId") ?: ""
                                 val name = doc.getString("name") ?: ""
                                 val baseDailyRate = (doc.get("baseDailyRate") as? Number)?.toDouble() ?: 350.0
@@ -332,6 +347,54 @@ class FirestoreSyncService(
                 .await()
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, path)
+        }
+    }
+
+    suspend fun pushMachine(machine: MachineEntity) {
+        val fs = firestore ?: return
+        val path = "machines/${machine.id}"
+        val payload = hashMapOf<String, Any?>(
+            "id" to machine.id,
+            "categoryId" to machine.categoryId,
+            "name" to machine.name,
+            "baseDailyRate" to machine.baseRate,
+            "dailyRate" to machine.currentRate,
+            "totalQty" to machine.totalQty,
+            "availableQty" to machine.availableQty,
+            "specs" to machine.modelOrSpecs,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        try {
+            fs.collection("machines").document(machine.id)
+                .set(payload, SetOptions.merge())
+                .await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+        }
+    }
+
+    suspend fun deleteMachineFromCloud(machineId: String) {
+        val fs = firestore ?: return
+        val path = "machines/$machineId"
+        try {
+            fs.collection("machines").document(machineId)
+                .delete()
+                .await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, path)
+        }
+    }
+
+    suspend fun deleteAllMachinesFromCloud() {
+        val fs = firestore ?: return
+        val path = "machines"
+        try {
+            val docs = fs.collection("machines").get().await()
+            for (doc in docs.documents) {
+                fs.collection("machines").document(doc.id).delete().await()
+            }
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, path)
         }
     }
 

@@ -987,7 +987,7 @@ fun ReportsScreen(
                                         color = if (job.status == "closed" || job.status == "returned") BabaSuccessLight else BabaYellowLight
                                     ) {
                                         Text(
-                                            text = job.status.uppercase(),
+                                            text = if (job.status == "closed" || job.status == "returned") "BILLED" else job.status.uppercase(),
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (job.status == "closed" || job.status == "returned") BabaSuccess else BabaYellowDark,

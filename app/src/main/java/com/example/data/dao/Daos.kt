@@ -100,6 +100,12 @@ interface MachineDao {
     @Update
     suspend fun updateMachine(machine: MachineEntity)
 
+    @Query("DELETE FROM machines WHERE id = :id")
+    suspend fun deleteMachineById(id: String)
+
+    @Query("DELETE FROM machines")
+    suspend fun deleteAllMachines()
+
     @Query("UPDATE machines SET availableQty = MAX(0, availableQty - :qty) WHERE id = :id")
     suspend fun decrementStock(id: String, qty: Int)
 
@@ -190,3 +196,19 @@ interface DailyCashDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(dailyCash: DailyCashEntity)
 }
+
+@Dao
+interface ExpenseDao {
+    @Query("SELECT * FROM expenses ORDER BY date DESC, timestamp DESC")
+    fun getAllExpenses(): Flow<List<ExpenseEntity>>
+
+    @Query("SELECT * FROM expenses ORDER BY date DESC, timestamp DESC")
+    suspend fun getAllExpensesList(): List<ExpenseEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExpense(expense: ExpenseEntity)
+
+    @Query("DELETE FROM expenses WHERE id = :id")
+    suspend fun deleteExpenseById(id: String)
+}
+
