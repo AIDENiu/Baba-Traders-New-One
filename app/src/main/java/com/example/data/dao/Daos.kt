@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import androidx.room.Upsert
 import com.example.data.model.*
 import kotlinx.coroutines.flow.Flow
 
@@ -12,6 +13,9 @@ import kotlinx.coroutines.flow.Flow
 interface UserDao {
     @Query("SELECT * FROM users")
     fun getAllUsers(): Flow<List<UserEntity>>
+
+    @Query("SELECT * FROM users")
+    suspend fun getAllUsersList(): List<UserEntity>
 
     @Query("SELECT * FROM users WHERE isActive = 1")
     fun getActiveUsers(): Flow<List<UserEntity>>
@@ -34,7 +38,7 @@ interface UserDao {
 
 @Dao
 interface CustomerDao {
-    @Query("SELECT * FROM customers WHERE name LIKE '%' || :query || '%' OR phone LIKE '%' || :query || '%'")
+    @Query("SELECT * FROM customers WHERE name LIKE '%' || :query || '%' OR phone LIKE '%' || :query || '%' ORDER BY name COLLATE NOCASE ASC, createdAt ASC")
     fun searchCustomers(query: String): Flow<List<CustomerEntity>>
 
     @Query("SELECT * FROM customers WHERE phone = :phone LIMIT 1")
@@ -43,10 +47,10 @@ interface CustomerDao {
     @Query("SELECT * FROM customers WHERE id = :id")
     suspend fun getCustomerById(id: String): CustomerEntity?
 
-    @Query("SELECT * FROM customers ORDER BY createdAt DESC")
+    @Query("SELECT * FROM customers ORDER BY name COLLATE NOCASE ASC, createdAt ASC")
     fun getAllCustomers(): Flow<List<CustomerEntity>>
 
-    @Query("SELECT * FROM customers ORDER BY createdAt DESC")
+    @Query("SELECT * FROM customers ORDER BY name COLLATE NOCASE ASC, createdAt ASC")
     suspend fun getAllCustomersList(): List<CustomerEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -54,6 +58,9 @@ interface CustomerDao {
 
     @Update
     suspend fun updateCustomer(customer: CustomerEntity)
+
+    @Query("DELETE FROM customers WHERE id = :id")
+    suspend fun deleteCustomerById(id: String)
 }
 
 @Dao
@@ -61,11 +68,20 @@ interface MachineCategoryDao {
     @Query("SELECT * FROM categories")
     fun getAllCategories(): Flow<List<MachineCategoryEntity>>
 
+    @Query("SELECT * FROM categories")
+    suspend fun getAllCategoriesList(): List<MachineCategoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategory(category: MachineCategoryEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategories(categories: List<MachineCategoryEntity>)
+
+    @Query("DELETE FROM categories WHERE id = :id")
+    suspend fun deleteCategoryById(id: String)
+
+    @Query("DELETE FROM categories")
+    suspend fun deleteAllCategories()
 }
 
 @Dao
@@ -103,13 +119,16 @@ interface MachineDao {
     @Query("DELETE FROM machines WHERE id = :id")
     suspend fun deleteMachineById(id: String)
 
+    @Query("DELETE FROM machines WHERE categoryId = :categoryId")
+    suspend fun deleteMachinesByCategory(categoryId: String)
+
     @Query("DELETE FROM machines")
     suspend fun deleteAllMachines()
 
     @Query("UPDATE machines SET availableQty = MAX(0, availableQty - :qty) WHERE id = :id")
     suspend fun decrementStock(id: String, qty: Int)
 
-    @Query("UPDATE machines SET availableQty = MIN(totalQty, availableQty + :qty) WHERE id = :id")
+    @Query("UPDATE machines SET availableQty = MIN(MAX(0, totalQty - maintenanceQty), availableQty + :qty) WHERE id = :id")
     suspend fun incrementStock(id: String, qty: Int)
 }
 
@@ -123,6 +142,9 @@ interface JobSheetDao {
 
     @Query("SELECT * FROM job_sheets WHERE isDeleted = 0 AND (status = 'active' OR status = 'overdue') ORDER BY checkoutTime DESC")
     fun getActiveJobSheets(): Flow<List<JobSheetEntity>>
+
+    @Query("SELECT * FROM job_sheets WHERE isDeleted = 0 AND (status = 'active' OR status = 'overdue') ORDER BY checkoutTime DESC")
+    suspend fun getActiveJobSheetsList(): List<JobSheetEntity>
 
     @Query("SELECT * FROM job_sheets WHERE isDeleted = 0 AND (status = 'overdue' OR (status = 'active' AND dueTime < :now)) ORDER BY dueTime ASC")
     fun getOverdueJobSheets(now: Long): Flow<List<JobSheetEntity>>
@@ -139,7 +161,7 @@ interface JobSheetDao {
     @Query("SELECT COUNT(*) FROM job_sheets")
     suspend fun getTotalCount(): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertJobSheet(jobSheet: JobSheetEntity)
 
     @Update
@@ -154,7 +176,7 @@ interface ActivityLogDao {
     @Query("SELECT * FROM activity_log ORDER BY timestamp DESC")
     suspend fun getAllLogsList(): List<ActivityLogEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLog(log: ActivityLogEntity)
 }
 
@@ -172,7 +194,7 @@ interface PaymentDao {
     @Query("SELECT * FROM payments WHERE jobSheetId = :jobSheetId ORDER BY timestamp DESC")
     fun getPaymentsForJobSheet(jobSheetId: String): Flow<List<PaymentEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPayment(payment: PaymentEntity)
 }
 
@@ -189,6 +211,9 @@ interface DailyCashDao {
 
     @Query("SELECT * FROM daily_cash ORDER BY date DESC")
     fun getAllDailyCash(): Flow<List<DailyCashEntity>>
+
+    @Query("SELECT * FROM daily_cash ORDER BY date DESC")
+    suspend fun getAllDailyCashList(): List<DailyCashEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDailyCash(dailyCash: DailyCashEntity)

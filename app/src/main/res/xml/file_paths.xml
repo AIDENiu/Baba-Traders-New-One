@@ -4,6 +4,8 @@
     <cache-path name="pdf_invoices" path="pdf_invoices/" />
     <cache-path name="pdf_reports" path="pdf_reports/" />
     <files-path name="internal_files" path="." />
+    <files-path name="files_pdf_invoices" path="pdf_invoices/" />
+    <files-path name="files_pdf_reports" path="pdf_reports/" />
     <external-path name="external_files" path="." />
     <external-files-path name="external_app_files" path="." />
     <external-cache-path name="external_cache_files" path="." />

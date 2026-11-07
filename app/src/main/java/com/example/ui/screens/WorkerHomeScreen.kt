@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.firebase.CloudSyncStatus
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.UserEntity
 import com.example.ui.components.*
@@ -38,9 +39,13 @@ fun WorkerHomeScreen(
     onViewPaymentHistoryClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
     onExpensesClick: () -> Unit = {},
-    onSwitchUser: () -> Unit
+    onSwitchUser: () -> Unit,
+    syncStatus: CloudSyncStatus = CloudSyncStatus.SYNCED,
+    syncError: String? = null,
+    onDismissSyncError: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var isOverdueBadgeDismissed by remember { mutableStateOf(false) }
     val now = remember { System.currentTimeMillis() }
     val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
 
@@ -63,7 +68,10 @@ fun WorkerHomeScreen(
         topBar = {
             BabaBrandTopBar(
                 currentUser = currentUser,
-                onSwitchUser = onSwitchUser
+                onSwitchUser = onSwitchUser,
+                syncStatus = syncStatus,
+                syncError = syncError,
+                onDismissSyncError = onDismissSyncError
             )
         },
         containerColor = BabaBg
@@ -147,12 +155,12 @@ fun WorkerHomeScreen(
                             imageVector = Icons.Default.AccountBalanceWallet,
                             contentDescription = "Expenses",
                             tint = BabaRed,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Expenses (Log Daily Expense)",
-                            fontSize = 13.sp,
+                            text = "Record / View Daily Shop Expenses",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = BabaDark
                         )
@@ -190,18 +198,30 @@ fun WorkerHomeScreen(
                 }
 
                 val overdueCount = filteredJobs.count { it.status == "overdue" || (it.status == "active" && it.dueTime < now) }
-                if (overdueCount > 0) {
+                if (overdueCount > 0 && !isOverdueBadgeDismissed) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = BabaOverdueLight
+                        color = BabaOverdueLight,
+                        modifier = Modifier.clickable { isOverdueBadgeDismissed = true }
                     ) {
-                        Text(
-                            text = "⚠ $overdueCount OVERDUE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            color = BabaOverdue,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "$overdueCount OVERDUE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = BabaOverdue
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear Overdue Warning",
+                                tint = BabaOverdue,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -465,6 +485,15 @@ fun WorkerJobCard(
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Default.History, contentDescription = "Payment History", tint = BabaDark, modifier = Modifier.size(18.dp))
+                }
+
+                // Direct PDF Icon Button
+                val cardContext = androidx.compose.ui.platform.LocalContext.current
+                IconButton(
+                    onClick = { com.example.util.PdfGenerator.viewJobSheetPdf(cardContext, jobSheet) },
+                    modifier = Modifier.size(36.dp).testTag("worker_pdf_job_${jobSheet.id}")
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = "View PDF Bill", tint = BabaRed, modifier = Modifier.size(18.dp))
                 }
 
                 // Receipt Icon Button

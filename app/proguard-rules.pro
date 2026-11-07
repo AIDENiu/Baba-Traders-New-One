@@ -1,21 +1,24 @@
 # Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Preserve line numbers for crash diagnostics
+-keepattributes SourceFile,LineNumberTable
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep Room Entities & Data Models for Room and Firestore serialization
+-keep class com.example.data.model.** { *; }
+-keepnames class com.example.data.model.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep Room Database & DAOs
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep class com.example.data.dao.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep BroadcastReceivers and WorkManager Worker
+-keep class com.example.util.DueAlarmReceiver { *; }
+-keep class com.example.util.BootCompletedReceiver { *; }
+-keep class com.example.data.firebase.CloudCatchUpSyncWorker { *; }
+
+# Keep Firebase Firestore & Auth model reflection
+-dontwarn com.google.firebase.**
+-keepclassmembers class * {
+    @com.google.firebase.firestore.PropertyName <fields>;
+    @com.google.firebase.firestore.PropertyName <methods>;
+}

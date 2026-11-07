@@ -11,77 +11,141 @@ service cloud.firestore {
     }
 
     function isOwner() {
-      return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'owner') ||
-        ('email' in request.auth.token && request.auth.token.email == 'rupak2472@gmail.com')
-      );
+      return isAuthenticated() &&
+        'email' in request.auth.token &&
+        request.auth.token.email.lower() == 'rupak2472@gmail.com'.lower();
+    }
+
+    function isPreAuthorizedWorkerByEmail() {
+      return isAuthenticated() &&
+        'email' in request.auth.token &&
+        exists(/databases/$(database)/documents/users/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/users/$(request.auth.token.email.lower())).data.role == 'worker' &&
+        get(/databases/$(database)/documents/users/$(request.auth.token.email.lower())).data.active != false;
     }
 
     function isStaff() {
       return isAuthenticated() && (
         isOwner() ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'worker')
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         getUserData().role == 'worker' &&
+         getUserData().active != false) ||
+        isPreAuthorizedWorkerByEmail()
       );
     }
 
-    // 1. Users collection
+    // 1. Users collection: Staff CANNOT set or change their own role or appSessionLinked.
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isOwner());
-      allow write: if isOwner() || (isAuthenticated() && request.auth.uid == userId);
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        isOwner() ||
+        isStaff() ||
+        ('email' in request.auth.token && request.auth.token.email.lower() == userId.lower())
+      );
+      allow create: if isOwner() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        isPreAuthorizedWorkerByEmail() &&
+        request.resource.data.role == 'worker' &&
+        request.resource.data.active == true &&
+        !('appSessionLinked' in request.resource.data)
+      );
+      allow update: if isOwner() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'role',
+          'active',
+          'maxDiscountAmount',
+          'maxDiscountPercent',
+          'appSessionLinked'
+        ])
+      );
+      allow delete: if isOwner();
     }
 
-    // 2. Customers collection
+    // 2. Customers collection: Staff only
     match /customers/{customerId} {
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow create, update: if isStaff();
       allow delete: if isOwner();
     }
 
-    // 3. Machine categories
+    // 3. Machine categories: Staff read, Owner write
     match /machine_categories/{categoryId} {
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow write: if isOwner();
     }
 
-    // 4. Machines collection: Workers cannot modify base pricing
+    // 4. Machines collection: Staff read; Workers can only update stock (availableQty), not pricing/metadata
     match /machines/{machineId} {
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow create, delete: if isOwner();
       allow update: if isOwner() || (
         isStaff() &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['baseDailyRate', 'dailyRate', 'name', 'categoryId'])
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['baseDailyRate', 'dailyRate', 'name', 'categoryId', 'totalQty'])
       );
     }
 
-    // 5. Job sheets collection: Immutable records. Delete is FORBIDDEN for everyone (including Owner)
+    // 5. Job sheets collection: Staff read/create/update; Delete is FORBIDDEN for everyone; Workers capped at 200 discount
     match /job_sheets/{jobSheetId} {
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow create: if isStaff() && (
         isOwner() || (request.resource.data.discount <= 200)
       );
-      // Only allow transition to closed or adding remarks/settlements; cannot alter original rental terms
-      allow update: if isStaff() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['id', 'customerId', 'customerName', 'customerPhone', 'machineId', 'rateUsed', 'checkoutTime', 'isDeleted']);
+      // Only allow transition to closed or adding remarks/settlements, not tampering with core billing history
+      allow update: if isStaff() &&
+        (isOwner() || !('discount' in request.resource.data) || request.resource.data.discount <= 200) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'id',
+          'customerId',
+          'customerName',
+          'customerPhone',
+          'machineId',
+          'rateUsed',
+          'checkoutTime',
+          'isDeleted'
+        ]);
       allow delete: if false; // STRICTLY FORBIDDEN FOR ALL USERS
     }
 
-    // 6. Payments collection: Immutable financial ledger
+    // 6. Payments collection: Immutable financial ledger (Staff read/create, no updates/deletes)
     match /payments/{paymentId} {
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow create: if isStaff();
-      allow update, delete: if false; // Financial records cannot be altered or deleted
+      allow update, delete: if false;
     }
 
-    // 7. Daily Cash collection: Owner can read all, staff can record daily balance
+    // 7. Daily Cash collection (Opening & Closing Cash Report): Owner read/delete, Staff create/update
     match /daily_cash/{dateId} {
       allow read: if isOwner();
-      allow write: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isOwner();
     }
 
-    // 8. Activity log: Write-only-once. Deny update and delete entirely
+    // 8. Activity log: Write-once audit ledger (Owner read, Staff create, no updates/deletes)
     match /activity_log/{logId} {
       allow read: if isOwner();
       allow create: if isStaff();
       allow update, delete: if false;
+    }
+
+    // 9. Expenses collection: Staff can log expenses, only Owner can read/manage report data
+    match /expenses/{expenseId} {
+      allow read: if isOwner();
+      allow create: if isStaff();
+      allow update, delete: if isOwner();
+    }
+
+    // 10. Reports collection: Strictly Owner-only
+    match /reports/{reportId} {
+      allow read, write: if isOwner();
+    }
+
+    // 11. Transactional counters (e.g. job_sheets sequential numbering across devices)
+    match /counters/{counterId} {
+      allow read, write: if isStaff();
     }
   }
 }

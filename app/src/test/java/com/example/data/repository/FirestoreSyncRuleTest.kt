@@ -23,9 +23,32 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
   }
 
   @Test
+  fun testNonStaffCannotReadOrSelfAssignRole() = runTest {
+    val strangerUid = signInTestUser("stranger@test.com")
+    // Cannot self-assign worker or owner role
+    try {
+      firestore.collection("users").document(strangerUid).set(
+        mapOf("uid" to strangerUid, "name" to "Stranger", "role" to "worker", "active" to true)
+      ).await()
+      fail("Expected non-owner self-assigning role to fail")
+    } catch (e: FirebaseFirestoreException) {
+      assertTrue(e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)
+    }
+
+    // Cannot read job_sheets, machines, or customers
+    try {
+      firestore.collection("job_sheets").document("any_job").get().await()
+      fail("Expected non-staff read of job_sheets to fail")
+    } catch (e: FirebaseFirestoreException) {
+      assertTrue(e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)
+    }
+  }
+
+  @Test
   fun testWorkerJobSheetDiscountFloorEnforced() = runTest {
     val workerUid = signInTestUser("worker_suresh@test.com")
-    // Register worker role in users collection
+    // Sign in as Owner (rupak2472@gmail.com) to provision worker role in users collection
+    signInTestUser("rupak2472@gmail.com")
     val userDoc = mapOf(
       "uid" to workerUid,
       "name" to "Suresh",
@@ -35,9 +58,13 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
     )
     firestore.collection("users").document(workerUid).set(userDoc).await()
 
+    // Switch back to worker account
+    signInTestUser("worker_suresh@test.com")
+
     // 1. Discount <= 200 should succeed
+    val validJobId = "job_valid_${System.currentTimeMillis()}"
     val validJob = mapOf(
-      "id" to "job_valid",
+      "id" to validJobId,
       "customerId" to "c1",
       "machineId" to "m1",
       "quantity" to 1,
@@ -48,13 +75,14 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
       "handledByUid" to workerUid,
       "isDeleted" to false
     )
-    firestore.collection("job_sheets").document("job_valid").set(validJob).await()
-    val readJob = firestore.collection("job_sheets").document("job_valid").get().await()
+    firestore.collection("job_sheets").document(validJobId).set(validJob).await()
+    val readJob = firestore.collection("job_sheets").document(validJobId).get().await()
     assertNotNull(readJob.data)
 
     // 2. Discount > 200 should fail
+    val invalidJobId = "job_invalid_${System.currentTimeMillis()}"
     val invalidJob = mapOf(
-      "id" to "job_invalid",
+      "id" to invalidJobId,
       "customerId" to "c1",
       "machineId" to "m1",
       "quantity" to 1,
@@ -66,7 +94,7 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
       "isDeleted" to false
     )
     try {
-      firestore.collection("job_sheets").document("job_invalid").set(invalidJob).await()
+      firestore.collection("job_sheets").document(invalidJobId).set(invalidJob).await()
       fail("Expected discount > 200 to fail with PERMISSION_DENIED")
     } catch (e: FirebaseFirestoreException) {
       assertTrue(e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)
@@ -76,6 +104,8 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
   @Test
   fun testActivityLogWriteOnceEnforced() = runTest {
     val workerUid = signInTestUser("worker_audit@test.com")
+    // Owner provisions the worker profile
+    signInTestUser("rupak2472@gmail.com")
     val userDoc = mapOf(
       "uid" to workerUid,
       "name" to "Worker",
@@ -84,18 +114,22 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
     )
     firestore.collection("users").document(workerUid).set(userDoc).await()
 
+    // Switch back to worker
+    signInTestUser("worker_audit@test.com")
+
+    val logId = "log_${System.currentTimeMillis()}"
     val log = mapOf(
-      "id" to "log_1",
+      "id" to logId,
       "jobSheetId" to "job_1",
       "action" to "created",
       "handledByUid" to workerUid
     )
     // Create succeeds
-    firestore.collection("activity_log").document("log_1").set(log).await()
+    firestore.collection("activity_log").document(logId).set(log).await()
 
     // Update fails
     try {
-      firestore.collection("activity_log").document("log_1").update("action", "tampered").await()
+      firestore.collection("activity_log").document(logId).update("action", "tampered").await()
       fail("Expected update on activity_log to fail")
     } catch (e: FirebaseFirestoreException) {
       assertTrue(e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)
@@ -103,7 +137,7 @@ class FirestoreSyncRuleTest : FirestoreEmulatorTestBase() {
 
     // Delete fails
     try {
-      firestore.collection("activity_log").document("log_1").delete().await()
+      firestore.collection("activity_log").document(logId).delete().await()
       fail("Expected delete on activity_log to fail")
     } catch (e: FirebaseFirestoreException) {
       assertTrue(e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)

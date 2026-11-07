@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -71,9 +72,9 @@ fun InAppPdfViewerDialog(
                     val pageCount = renderer.pageCount
                     for (i in 0 until pageCount) {
                         val page = renderer.openPage(i)
-                        // Render at 2.5x density for crisp text and lines
-                        val width = (page.width * 2.5f).toInt().coerceAtLeast(1)
-                        val height = (page.height * 2.5f).toInt().coerceAtLeast(1)
+                        // Render 5.5" x 8.5" (396 x 612 pt) at 3.0x density for crisp text and lines
+                        val width = (page.width * 3.0f).toInt().coerceAtLeast(1)
+                        val height = (page.height * 3.0f).toInt().coerceAtLeast(1)
                         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                         val canvas = android.graphics.Canvas(bmp)
                         canvas.drawColor(android.graphics.Color.WHITE)
@@ -166,6 +167,18 @@ fun InAppPdfViewerDialog(
                                 tint = if (zoomScale < 2.5f) Color.White else Color.White.copy(alpha = 0.4f)
                             )
                         }
+                        // Print 5.5" x 8.5" Bill
+                        IconButton(
+                            onClick = {
+                                PdfGenerator.printPdfFile(context, request.file)
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Print,
+                                contentDescription = "Print 5.5x8.5 Bill",
+                                tint = Color.White
+                            )
+                        }
                         // Open in External PDF App
                         IconButton(
                             onClick = {
@@ -197,8 +210,8 @@ fun InAppPdfViewerDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
@@ -207,23 +220,51 @@ fun InAppPdfViewerDialog(
                             },
                             shape = RoundedCornerShape(10.dp),
                             border = BorderStroke(1.dp, BabaDark),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(46.dp)
+                                .height(44.dp)
                                 .testTag("pdf_viewer_save_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Download,
                                 contentDescription = "Save PDF",
                                 tint = BabaDark,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Save PDF",
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = BabaDark
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                PdfGenerator.printPdfFile(context, request.file)
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, BabaRed),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("pdf_viewer_print_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Print,
+                                contentDescription = "Print 5.5x8.5",
+                                tint = BabaRed,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Print 5.5×8.5",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaRed
                             )
                         }
 
@@ -238,21 +279,22 @@ fun InAppPdfViewerDialog(
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BabaSuccess),
                             shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp)
+                                .weight(1.1f)
+                                .height(44.dp)
                                 .testTag("pdf_viewer_share_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
                                 contentDescription = "Share PDF",
                                 tint = Color.White,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Share PDF",
-                                fontSize = 12.sp,
+                                text = "Send / Share",
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )

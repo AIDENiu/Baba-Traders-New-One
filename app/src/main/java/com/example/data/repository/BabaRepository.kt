@@ -166,10 +166,17 @@ class BabaRepository(private val db: AppDatabase) {
     fun searchCustomers(query: String) = db.customerDao().searchCustomers(query)
     suspend fun insertCustomer(customer: CustomerEntity) = db.customerDao().insertCustomer(customer)
     suspend fun updateCustomer(customer: CustomerEntity) = db.customerDao().updateCustomer(customer)
+    suspend fun deleteCustomer(id: String) = db.customerDao().deleteCustomerById(id)
 
     // --- Categories & Machines ---
     val allCategories: Flow<List<MachineCategoryEntity>> = db.machineCategoryDao().getAllCategories()
     val allMachines: Flow<List<MachineEntity>> = db.machineDao().getAllMachines()
+
+    suspend fun insertCategory(category: MachineCategoryEntity) = db.machineCategoryDao().insertCategory(category)
+    suspend fun deleteCategory(categoryId: String) {
+        db.machineDao().deleteMachinesByCategory(categoryId)
+        db.machineCategoryDao().deleteCategoryById(categoryId)
+    }
 
     fun getMachinesByCategory(categoryId: String) = db.machineDao().getMachinesByCategory(categoryId)
     suspend fun getMachineById(id: String) = db.machineDao().getMachineById(id)
@@ -228,9 +235,19 @@ class BabaRepository(private val db: AppDatabase) {
         db.expenseDao().deleteExpenseById(id)
     }
 
+    suspend fun getMaxLocalJobNumber(): Int {
+        val jobs = db.jobSheetDao().getAllJobSheetsList()
+        var maxNum = 0
+        for (job in jobs) {
+            val num = job.id.removePrefix("JOB-").trim().toIntOrNull() ?: 0
+            if (num > maxNum) maxNum = num
+        }
+        return maxNum
+    }
+
     suspend fun generateNextJobId(): String {
-        val count = db.jobSheetDao().getTotalCount() + 1
-        return String.format(Locale.getDefault(), "JOB-%04d", count)
+        val next = getMaxLocalJobNumber() + 1
+        return String.format(Locale.US, "JOB-%04d", next)
     }
 
     // Billing Due Date calculation - Daily rental cycle: 8:00 AM today to 8:00 AM tomorrow
@@ -312,13 +329,14 @@ class BabaRepository(private val db: AppDatabase) {
         idPhotoPath: String? = null,
         machinePhotoPath: String? = null,
         explicitDueTime: Long? = null,
-        context: Context? = null
+        context: Context? = null,
+        explicitJobId: String? = null
     ): JobSheetEntity {
         // 1. Ensure customer is persisted
         db.customerDao().insertCustomer(customer.copy(personPhotoPath = personPhotoPath ?: customer.personPhotoPath))
 
-        // 2. Generate unique display ID
-        val jobId = generateNextJobId()
+        // 2. Use transactional cloud ID if provided, otherwise conflict-safe max+1
+        val jobId = explicitJobId?.takeIf { it.isNotBlank() } ?: generateNextJobId()
         val now = System.currentTimeMillis()
         val dueTime = explicitDueTime ?: computeDueTime(now, "working_hours")
 
@@ -478,7 +496,7 @@ class BabaRepository(private val db: AppDatabase) {
             0
         }
         val autoCalculatedDays = maxOf(elapsedDays, bookedDays + extraDaysPastDueCutoff).coerceAtLeast(1)
-        val daysUsed = (overrideDaysUsed ?: autoCalculatedDays).coerceAtLeast(1)
+        val daysUsed = overrideDaysUsed?.coerceAtLeast(0) ?: autoCalculatedDays
         val initialQty = jobSheet.effectiveInitialQty.coerceAtLeast(1)
         val qty = returningQuantity.coerceAtLeast(1)
 
@@ -518,7 +536,7 @@ class BabaRepository(private val db: AppDatabase) {
             baseDays = bookedDays,
             daysLate = extraDaysCount,
             baseRentalFee = baseRentalFee,
-            lateFee = 0.0,
+            lateFee = extraRentAmount,
             discount = totalDiscount,
             depositAmount = depositAllocated,
             netTotalFee = netTotalFee,
@@ -594,7 +612,11 @@ class BabaRepository(private val db: AppDatabase) {
             returnTime = returnTime,
             overrideDaysUsed = overrideDaysUsed
         )
-        val isNoWorkDone = settlementMethod == "no_work_done"
+        // Enforce worker discount cap across total discount on the job sheet
+        if (currentUser.role.equals("worker", ignoreCase = true) && calc.discount > currentUser.maxDiscountAmount) {
+            throw IllegalArgumentException("Worker discount cannot exceed ₹${currentUser.maxDiscountAmount.toInt()}")
+        }
+        val isNoWorkDone = settlementMethod == "no_work_done" || overrideDaysUsed == 0
         val parsedMethod = parsePaymentMethod(settlementMethod, kotlin.math.abs(calc.balanceDueOrRefund))
 
         val updatedJob = jobSheet.copy(
@@ -607,18 +629,25 @@ class BabaRepository(private val db: AppDatabase) {
             returnedQuantity = jobSheet.effectiveInitialQty,
             quantity = 0,
             discount = calc.discount,
-            lateFee = 0.0,
-            totalRentalFee = if (isNoWorkDone) 0.0 else calc.netTotalFee,
+            lateFee = if (isNoWorkDone) 0.0 else (jobSheet.lateFee + calc.extraRentApplied),
+            totalRentalFee = if (isNoWorkDone) 0.0 else (jobSheet.totalRentalFee + calc.netTotalFee),
             finalSettlement = 0.0, // Fully settled upon return; strictly no false balance due!
             returnRemark = remark,
-            paymentMode = if (!isNoWorkDone && parsedMethod.isSplit) parsedMethod.displayMode else jobSheet.paymentMode
+            paymentMode = if (isNoWorkDone) "no_work_done" else if (parsedMethod.isSplit) parsedMethod.displayMode else parsedMethod.singleMethod.ifBlank { jobSheet.paymentMode }
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
         val itemsInJob = SelectedMachineItem.listFromJson(jobSheet.itemsJson)
         if (itemsInJob.isNotEmpty()) {
-            itemsInJob.forEach { item ->
-                db.machineDao().incrementStock(item.machineId, item.quantity)
+            // Only restore the remaining unreturned units across items
+            var toRestore = jobSheet.remainingActiveQty
+            for (item in itemsInJob) {
+                if (toRestore <= 0) break
+                val restoreQty = minOf(item.quantity, toRestore)
+                if (restoreQty > 0) {
+                    db.machineDao().incrementStock(item.machineId, restoreQty)
+                    toRestore -= restoreQty
+                }
             }
         } else {
             db.machineDao().incrementStock(jobSheet.machineId, jobSheet.remainingActiveQty)
@@ -734,6 +763,9 @@ class BabaRepository(private val db: AppDatabase) {
             returnTime = returnTime,
             overrideDaysUsed = overrideDaysUsed
         )
+        if (currentUser.role.equals("worker", ignoreCase = true) && (jobSheet.discount + manualDiscount) > currentUser.maxDiscountAmount) {
+            throw IllegalArgumentException("Worker discount cannot exceed ₹${currentUser.maxDiscountAmount.toInt()}")
+        }
         val parsedMethod = parsePaymentMethod(settlementMethod, kotlin.math.abs(calc.balanceDueOrRefund))
 
         val currentActiveQty = jobSheet.remainingActiveQty
@@ -747,7 +779,9 @@ class BabaRepository(private val db: AppDatabase) {
             quantity = newRemainingQty,
             initialQuantity = jobSheet.effectiveInitialQty,
             returnedQuantity = newReturnedQty,
+            discount = jobSheet.discount + manualDiscount,
             depositAmount = remainingDeposit,
+            lateFee = jobSheet.lateFee + calc.extraRentApplied,
             totalRentalFee = jobSheet.totalRentalFee + calc.netTotalFee,
             finalSettlement = 0.0,
             status = if (isFullyClosed) "closed" else "active",
@@ -756,12 +790,33 @@ class BabaRepository(private val db: AppDatabase) {
             returnedByName = currentUser.name,
             closedBy = if (isFullyClosed) currentUser.id else jobSheet.closedBy,
             closedByName = if (isFullyClosed) currentUser.name else jobSheet.closedByName,
-            returnRemark = if (isFullyClosed) remark else jobSheet.returnRemark,
+            returnRemark = if (isFullyClosed || remark.isNotBlank()) remark else jobSheet.returnRemark,
             paymentMode = if (parsedMethod.isSplit) parsedMethod.displayMode else jobSheet.paymentMode
         )
 
         db.jobSheetDao().updateJobSheet(updatedJob)
-        db.machineDao().incrementStock(jobSheet.machineId, returningQuantity)
+        val itemsInJob = SelectedMachineItem.listFromJson(jobSheet.itemsJson)
+        if (itemsInJob.isNotEmpty()) {
+            // Skip units already returned in previous partial returns, then restore returningQuantity across items
+            var alreadyReturnedToSkip = jobSheet.returnedQuantity
+            var remainingToRestore = returningQuantity
+            for (item in itemsInJob) {
+                if (remainingToRestore <= 0) break
+                val skippedHere = minOf(item.quantity, alreadyReturnedToSkip)
+                alreadyReturnedToSkip -= skippedHere
+                val activeInThisItem = item.quantity - skippedHere
+                if (activeInThisItem > 0) {
+                    val restoreNow = minOf(activeInThisItem, remainingToRestore)
+                    db.machineDao().incrementStock(item.machineId, restoreNow)
+                    remainingToRestore -= restoreNow
+                }
+            }
+        } else {
+            val targetMachineId = jobSheet.machineId.split(",").firstOrNull()?.trim().orEmpty()
+            if (targetMachineId.isNotEmpty()) {
+                db.machineDao().incrementStock(targetMachineId, returningQuantity)
+            }
+        }
 
         if (isFullyClosed && context != null) {
             com.example.util.DueAlarmScheduler.cancelAlarms(context, jobSheet.id)

@@ -15,32 +15,20 @@ enum class OperationType(val value: String) {
 }
 
 fun handleFirestoreError(exception: Exception, operationType: OperationType, path: String?): String {
-    val auth = FirebaseAuth.getInstance()
-    val currentUser = auth.currentUser
+    val auth = try { FirebaseAuth.getInstance() } catch (e: Exception) { null }
+    val currentUser = auth?.currentUser
+    val collectionName = path?.substringBefore("/") ?: "unknown"
+    val rawMessage = exception.message ?: exception.toString()
 
-    val providerInfoList = currentUser?.providerData?.map { provider ->
-        JSONObject().apply {
-            put("providerId", provider.providerId)
-            put("email", provider.email)
-        }
-    } ?: emptyList()
-
-    val authInfoJson = JSONObject().apply {
-        put("userId", currentUser?.uid)
-        put("email", currentUser?.email)
-        put("emailVerified", currentUser?.isEmailVerified)
-        put("tenantId", currentUser?.tenantId)
-        put("providerInfo", JSONArray(providerInfoList))
-    }
-
+    // Sanitize log output: never log personal data (emails, phone numbers, or customer names)
     val errorInfoJson = JSONObject().apply {
-        put("error", exception.message ?: exception.toString())
+        put("error", rawMessage)
         put("operationType", operationType.value)
-        put("path", path)
-        put("authInfo", authInfoJson)
+        put("collection", collectionName)
+        put("isAuthenticated", currentUser != null)
     }
 
     val jsonString = errorInfoJson.toString()
-    Log.e("FirestoreError", "Firestore Error: $jsonString")
-    return jsonString
+    Log.e("FirestoreSync", "Cloud sync error: $jsonString")
+    return "Sync Error (${operationType.value.uppercase()} on $collectionName): $rawMessage"
 }

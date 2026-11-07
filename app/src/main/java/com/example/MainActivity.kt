@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,12 +66,20 @@ fun BabaAppContent(viewModel: BabaViewModel) {
     val activityLogs by viewModel.activityLogs.collectAsStateWithLifecycle()
     val payments by viewModel.payments.collectAsStateWithLifecycle()
     val expenses by viewModel.expenses.collectAsStateWithLifecycle()
+    val dailyCashList by viewModel.dailyCashList.collectAsStateWithLifecycle()
     val dashboardStats by viewModel.dashboardStats.collectAsStateWithLifecycle()
     val alertNotification by viewModel.ownerAlert.collectAsStateWithLifecycle()
+    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val syncError by viewModel.syncError.collectAsStateWithLifecycle()
+    val isManualSyncing by viewModel.isManualSyncing.collectAsStateWithLifecycle()
+    val manualSyncStatus by viewModel.manualSyncStatus.collectAsStateWithLifecycle()
+    val backupsList by viewModel.backupsList.collectAsStateWithLifecycle()
+    val isBackupRestoreBusy by viewModel.isBackupRestoreBusy.collectAsStateWithLifecycle()
+    val backupRestoreStatus by viewModel.backupRestoreStatus.collectAsStateWithLifecycle()
     val activePdfPreview by PdfGenerator.activePdfPreview.collectAsStateWithLifecycle()
 
-    // Navigation Screen State
-    var currentScreen by remember { mutableStateOf("auth") }
+    // Navigation Screen State (saved across rotation and configuration changes)
+    var currentScreen by rememberSaveable { mutableStateOf("auth") }
 
     // Dialog States
     var jobToReturn by remember { mutableStateOf<JobSheetEntity?>(null) }
@@ -139,7 +148,10 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onSwitchUser = {
                             viewModel.logout()
                             currentScreen = "auth"
-                        }
+                        },
+                        syncStatus = syncStatus,
+                        syncError = syncError,
+                        onDismissSyncError = { viewModel.dismissAlert() }
                     )
                 }
             }
@@ -163,6 +175,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onNavigateToStaffPerformance = { currentScreen = "staff_performance" },
                         onNavigateToExpenses = { currentScreen = "expenses" },
                         onNavigateToActivityLog = { currentScreen = "activity_log" },
+                        onNavigateToAppControl = { currentScreen = "app_control" },
                         onReturnJobClick = { job ->
                             jobToReturn = job
                             returnCalculation = viewModel.calculateReturnBill(job)
@@ -171,6 +184,22 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         onSwitchUser = {
                             viewModel.logout()
                             currentScreen = "auth"
+                        },
+                        syncStatus = syncStatus,
+                        syncError = syncError,
+                        onDismissSyncError = { viewModel.dismissAlert() },
+                        isManualSyncing = isManualSyncing,
+                        manualSyncStatus = manualSyncStatus,
+                        onSyncToOtherDevices = {
+                            viewModel.syncToOtherDevices(
+                                context = context,
+                                onSuccess = { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                }
+                            )
                         }
                     )
                 }
@@ -210,6 +239,21 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 machineId = machineId,
                                 onSuccess = {
                                     Toast.makeText(context, "Machine deleted from inventory", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        savedCustomers = customers,
+                        onSaveCustomerManually = { name, phone, address ->
+                            viewModel.saveCustomer(
+                                existingCustomer = null,
+                                name = name,
+                                phone = phone,
+                                address = address,
+                                onSuccess = {
+                                    Toast.makeText(context, "Customer '$name' saved to Customer Directory", Toast.LENGTH_SHORT).show()
                                 },
                                 onError = { err ->
                                     Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
@@ -278,6 +322,32 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 }
                             )
                         },
+                        onUpdateMaintenance = { machineId, newMaintQty ->
+                            viewModel.updateMachineMaintenance(
+                                machineId = machineId,
+                                newMaintenanceQty = newMaintQty,
+                                onSuccess = { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onUpdatePricingAndMaintenance = { machineId, currentRate, totalQty, maintQty ->
+                            viewModel.updateMachinePricing(
+                                machineId = machineId,
+                                currentRate = currentRate,
+                                totalQty = totalQty,
+                                maintenanceQty = maintQty,
+                                onSuccess = {
+                                    Toast.makeText(context, "Rate, stock & maintenance updated", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
                         onDeleteMachine = { machineId ->
                             viewModel.deleteMachine(
                                 machineId = machineId,
@@ -299,6 +369,28 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                                 }
                             )
                         },
+                        onAddCategory = { categoryName ->
+                            viewModel.addCategory(
+                                name = categoryName,
+                                onSuccess = {
+                                    Toast.makeText(context, "Category '$categoryName' added", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        onDeleteCategory = { categoryId ->
+                            viewModel.deleteCategory(
+                                categoryId = categoryId,
+                                onSuccess = {
+                                    Toast.makeText(context, "Category deleted", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
                         onNavigateBack = {
                             currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
                         }
@@ -312,6 +404,34 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                     CustomersScreen(
                         customers = customers,
                         allJobSheets = allJobSheets,
+                        onSaveCustomer = { existing, name, phone, address, onSuccess, onError ->
+                            viewModel.saveCustomer(
+                                existingCustomer = existing,
+                                name = name,
+                                phone = phone,
+                                address = address,
+                                onSuccess = {
+                                    Toast.makeText(
+                                        context,
+                                        if (existing == null) "Customer '$name' added" else "Customer '$name' updated",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    onSuccess()
+                                },
+                                onError = onError
+                            )
+                        },
+                        onDeleteCustomer = { customerId ->
+                            viewModel.deleteCustomer(
+                                customerId = customerId,
+                                onSuccess = {
+                                    Toast.makeText(context, "Customer removed", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
                         onNavigateBack = {
                             currentScreen = if (user.role == "owner") "owner_dashboard" else "worker_home"
                         }
@@ -326,6 +446,17 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                         currentUser = user,
                         allJobSheets = allJobSheets,
                         payments = payments,
+                        categories = categories,
+                        machines = machines,
+                        expenses = expenses,
+                        dailyCashList = dailyCashList,
+                        onSaveOpeningCash = { dateStr, amt ->
+                            viewModel.saveOpeningCash(dateStr, amt, {}, {})
+                        },
+                        onSaveClosingCash = { dateStr, amt ->
+                            viewModel.saveClosingCash(dateStr, amt, {}, {})
+                        },
+                        onViewReceipt = { job -> jobForReceipt = job },
                         onExportCsv = { filteredList ->
                             viewModel.exportReport(context, filteredList)
                         },
@@ -340,7 +471,7 @@ fun BabaAppContent(viewModel: BabaViewModel) {
 
             "manage_staff" -> {
                 val user = currentUser
-                if (user != null) {
+                if (user != null && user.role == "owner") {
                     ManageStaffScreen(
                         currentUser = user,
                         users = users,
@@ -392,30 +523,78 @@ fun BabaAppContent(viewModel: BabaViewModel) {
                             currentScreen = "owner_dashboard"
                         }
                     )
+                } else {
+                    currentScreen = "worker_home"
                 }
             }
 
             "activity_log" -> {
-                ActivityLogScreen(
-                    logs = activityLogs,
-                    onNavigateBack = {
-                        currentScreen = "owner_dashboard"
-                    }
-                )
+                val user = currentUser
+                if (user != null && user.role == "owner") {
+                    ActivityLogScreen(
+                        logs = activityLogs,
+                        onNavigateBack = {
+                            currentScreen = "owner_dashboard"
+                        }
+                    )
+                } else {
+                    currentScreen = "worker_home"
+                }
+            }
+
+            "app_control" -> {
+                val user = currentUser
+                if (user != null && user.role == "owner") {
+                    AppControlScreen(
+                        customersCount = customers.size,
+                        machinesCount = machines.size,
+                        jobSheetsCount = allJobSheets.size,
+                        paymentsCount = payments.size,
+                        expensesCount = expenses.size,
+                        activityLogsCount = activityLogs.size,
+                        backupsList = backupsList,
+                        isBusy = isBackupRestoreBusy,
+                        statusMessage = backupRestoreStatus,
+                        onClearStatus = { viewModel.clearBackupRestoreStatus() },
+                        onRefreshBackups = { viewModel.refreshBackupsList(context) },
+                        onCreateFullBackupZip = { onSuccess, onError ->
+                            viewModel.createFullBackupZip(context, onSuccess, onError)
+                        },
+                        onSaveBackupZipToUri = { srcFile, destUri, onSuccess, onError ->
+                            viewModel.saveBackupZipToUri(context, srcFile, destUri, onSuccess, onError)
+                        },
+                        onRestoreFromSavedZip = { zipFile, onSuccess, onError ->
+                            viewModel.restoreFromSavedBackupZip(context, zipFile, onSuccess, onError)
+                        },
+                        onRestoreFromExternalUri = { uri, onSuccess, onError ->
+                            viewModel.restoreFromExternalBackupUri(context, uri, onSuccess, onError)
+                        },
+                        onNavigateBack = {
+                            currentScreen = "owner_dashboard"
+                        }
+                    )
+                } else {
+                    currentScreen = "worker_home"
+                }
             }
 
             "staff_performance" -> {
-                StaffPerformanceScreen(
-                    users = users,
-                    allJobSheets = allJobSheets,
-                    payments = payments,
-                    activityLogs = activityLogs,
-                    onViewReceipt = { job -> jobForReceipt = job },
-                    onNavigateToManageStaff = { currentScreen = "manage_staff" },
-                    onNavigateBack = {
-                        currentScreen = "owner_dashboard"
-                    }
-                )
+                val user = currentUser
+                if (user != null && user.role == "owner") {
+                    StaffPerformanceScreen(
+                        users = users,
+                        allJobSheets = allJobSheets,
+                        payments = payments,
+                        activityLogs = activityLogs,
+                        onViewReceipt = { job -> jobForReceipt = job },
+                        onNavigateToManageStaff = { currentScreen = "manage_staff" },
+                        onNavigateBack = {
+                            currentScreen = "owner_dashboard"
+                        }
+                    )
+                } else {
+                    currentScreen = "worker_home"
+                }
             }
 
             "expenses" -> {

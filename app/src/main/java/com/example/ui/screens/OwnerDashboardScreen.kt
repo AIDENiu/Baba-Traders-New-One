@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.firebase.CloudSyncStatus
 import com.example.data.model.ActivityLogEntity
 import com.example.data.model.JobSheetEntity
 import com.example.data.model.UserEntity
@@ -51,14 +52,22 @@ fun OwnerDashboardScreen(
     onNavigateToStaffPerformance: () -> Unit = {},
     onNavigateToExpenses: () -> Unit = {},
     onNavigateToActivityLog: () -> Unit,
+    onNavigateToAppControl: () -> Unit = {},
     onReturnJobClick: (JobSheetEntity) -> Unit,
     onViewReceiptClick: (JobSheetEntity) -> Unit,
-    onSwitchUser: () -> Unit
+    onSwitchUser: () -> Unit,
+    syncStatus: CloudSyncStatus = CloudSyncStatus.SYNCED,
+    syncError: String? = null,
+    onDismissSyncError: () -> Unit = {},
+    isManualSyncing: Boolean = false,
+    manualSyncStatus: String? = null,
+    onSyncToOtherDevices: () -> Unit = {}
 ) {
     val now = remember { System.currentTimeMillis() }
     val overdueJobs = remember(activeJobs) {
         activeJobs.filter { !it.isDeleted && (it.status == "overdue" || (it.status == "active" && it.dueTime < now)) }
     }
+    var isOverdueWarningDismissed by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
 
     Scaffold(
@@ -67,7 +76,13 @@ fun OwnerDashboardScreen(
                 currentUser = currentUser,
                 onSwitchUser = onSwitchUser,
                 alertNotification = alertNotification,
-                onDismissAlert = onDismissAlert
+                onDismissAlert = onDismissAlert,
+                syncStatus = syncStatus,
+                syncError = syncError,
+                onDismissSyncError = onDismissSyncError,
+                isManualSyncing = isManualSyncing,
+                manualSyncStatus = manualSyncStatus,
+                onSyncToOtherDevices = onSyncToOtherDevices
             )
         },
         containerColor = BabaBg
@@ -202,9 +217,9 @@ fun OwnerDashboardScreen(
                         MetricCard(
                             title = "Active Rentals",
                             value = "${stats.activeRentalsCount}",
-                            subtitle = if (stats.overdueRentalsCount > 0) "${stats.overdueRentalsCount} Overdue!" else "All on track",
+                            subtitle = if (stats.overdueRentalsCount > 0 && !isOverdueWarningDismissed) "${stats.overdueRentalsCount} Overdue" else "All on track",
                             icon = Icons.Default.Build,
-                            iconColor = if (stats.overdueRentalsCount > 0) BabaOverdue else BabaDark,
+                            iconColor = if (stats.overdueRentalsCount > 0 && !isOverdueWarningDismissed) BabaOverdue else BabaDark,
                             modifier = Modifier.weight(1f)
                         )
                         MetricCard(
@@ -304,6 +319,16 @@ fun OwnerDashboardScreen(
                         color = BabaDark,
                         modifier = Modifier.weight(1f),
                         onClick = onNavigateToActivityLog
+                    )
+                    ShopActionTile(
+                        title = "App Control",
+                        subtitle = "Backup & restore",
+                        icon = Icons.Default.SettingsBackupRestore,
+                        color = BabaRed,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("shop_management_app_control_tile"),
+                        onClick = onNavigateToAppControl
                     )
                 }
 
@@ -411,8 +436,8 @@ fun OwnerDashboardScreen(
                 }
             }
 
-            // Overdue Rentals Section (if any exist)
-            if (overdueJobs.isNotEmpty()) {
+            // Overdue Rentals Section (if any exist and not dismissed)
+            if (overdueJobs.isNotEmpty() && !isOverdueWarningDismissed) {
                 item {
                     Card(
                         shape = RoundedCornerShape(14.dp),
@@ -426,7 +451,7 @@ fun OwnerDashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Icon(Icons.Default.Warning, contentDescription = "Alert", tint = BabaOverdue, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.Schedule, contentDescription = "Overdue", tint = BabaOverdue, modifier = Modifier.size(20.dp))
                                     Text(
                                         text = "Overdue Machinery (${overdueJobs.size})",
                                         fontWeight = FontWeight.Bold,
@@ -434,8 +459,21 @@ fun OwnerDashboardScreen(
                                         color = BabaOverdue
                                     )
                                 }
-                                TextButton(onClick = onNavigateToActiveJobs) {
-                                    Text("View All", fontSize = 12.sp, color = BabaOverdue, fontWeight = FontWeight.Bold)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = onNavigateToActiveJobs) {
+                                        Text("View All", fontSize = 12.sp, color = BabaOverdue, fontWeight = FontWeight.Bold)
+                                    }
+                                    IconButton(
+                                        onClick = { isOverdueWarningDismissed = true },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Clear Warning",
+                                            tint = BabaOverdue,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
 

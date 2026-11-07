@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -84,6 +85,8 @@ fun QuickJobSheetScreen(
         onError: (String) -> Unit
     ) -> Unit,
     onDeleteMachineFromInventory: (machineId: String) -> Unit = {},
+    savedCustomers: List<CustomerEntity> = emptyList(),
+    onSaveCustomerManually: (name: String, phone: String, address: String) -> Unit = { _, _, _ -> },
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
@@ -95,6 +98,8 @@ fun QuickJobSheetScreen(
     var customerName by remember { mutableStateOf("") }
     var customerAddress by remember { mutableStateOf("") }
     var isReturningCustomer by remember { mutableStateOf(false) }
+    var showSelectCustomerDialog by remember { mutableStateOf(false) }
+    var showManualCustomerDialog by remember { mutableStateOf(false) }
 
     // 2. Multi-Category & Multi-Machine Selection State
     var selectedCategoryId by remember {
@@ -361,11 +366,66 @@ fun QuickJobSheetScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Quick Customer Directory Picker & Manual Add Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showSelectCustomerDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("select_saved_customer_button")
+                        ) {
+                            Icon(Icons.Default.People, contentDescription = null, tint = BabaRed, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Select Customer (${savedCustomers.size})",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaDark
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val cleanPh = phone.trim().filter { it.isDigit() }
+                                if (customerName.isNotBlank() && cleanPh.length >= 10) {
+                                    onSaveCustomerManually(customerName.trim(), cleanPh, customerAddress.trim())
+                                    isReturningCustomer = true
+                                } else {
+                                    showManualCustomerDialog = true
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("quick_add_customer_button")
+                        ) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = null, tint = BabaRed, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "+ Add Customer",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaRed
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
                         value = phone,
-                        onValueChange = { phone = it },
+                        onValueChange = {
+                            phone = it
+                            errorMessage = null
+                        },
                         label = { Text("Phone Number (Auto-fills returning customers)") },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = "Phone", tint = BabaGray) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -380,7 +440,10 @@ fun QuickJobSheetScreen(
 
                     OutlinedTextField(
                         value = customerName,
-                        onValueChange = { customerName = it },
+                        onValueChange = {
+                            customerName = it
+                            errorMessage = null
+                        },
                         label = { Text("Customer Name *") },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Name", tint = BabaGray) },
                         singleLine = true,
@@ -394,7 +457,10 @@ fun QuickJobSheetScreen(
 
                     OutlinedTextField(
                         value = customerAddress,
-                        onValueChange = { customerAddress = it },
+                        onValueChange = {
+                            customerAddress = it
+                            errorMessage = null
+                        },
                         label = { Text("Site / Delivery Address") },
                         leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = "Address", tint = BabaGray) },
                         colors = babaTextFieldColors(),
@@ -578,6 +644,7 @@ fun QuickJobSheetScreen(
                                         shape = RoundedCornerShape(12.dp)
                                     )
                                     .clickable {
+                                        errorMessage = null
                                         if (isSelected) {
                                             selectedItemsMap.remove(mach.id)
                                         } else if (mach.availableQty > 0) {
@@ -646,7 +713,12 @@ fun QuickJobSheetScreen(
                                                 color = if (mach.availableQty > 0) BabaSuccessLight else BabaOverdueLight
                                             ) {
                                                 Text(
-                                                    text = if (mach.availableQty > 0) "${mach.availableQty} Avail" else "Out of Stock",
+                                                    text = when {
+                                                        mach.availableQty == 0 && mach.maintenanceQty > 0 -> "Out of Stock (Maint.)"
+                                                        mach.availableQty == 0 -> "Out of Stock"
+                                                        mach.maintenanceQty > 0 -> "${mach.availableQty} Avail (${mach.maintenanceQty} Maint.)"
+                                                        else -> "${mach.availableQty} Avail"
+                                                    },
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = if (mach.availableQty > 0) BabaSuccess else BabaOverdue,
@@ -997,6 +1069,7 @@ fun QuickJobSheetScreen(
                             value = dailyRateText,
                             onValueChange = { newRateStr ->
                                 dailyRateText = newRateStr
+                                errorMessage = null
                                 val parsed = newRateStr.toDoubleOrNull()
                                 if (parsed != null && selectedItemsMap.isNotEmpty()) {
                                     if (selectedItemsMap.size == 1) {
@@ -1033,7 +1106,10 @@ fun QuickJobSheetScreen(
 
                         OutlinedTextField(
                             value = discountText,
-                            onValueChange = { discountText = it },
+                            onValueChange = {
+                                discountText = it
+                                errorMessage = null
+                            },
                             label = { Text("Discount (₹)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = babaTextFieldColors(),
@@ -1447,6 +1523,7 @@ fun QuickJobSheetScreen(
                             value = depositText,
                             onValueChange = {
                                 depositText = it
+                                errorMessage = null
                                 val totalDep = it.toDoubleOrNull() ?: 0.0
                                 val currentCash = splitDepositCashText.toDoubleOrNull() ?: 0.0
                                 if (depositMethod == "split") {
@@ -1562,8 +1639,9 @@ fun QuickJobSheetScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
+                                val splitTotal = (splitDepositCashText.toDoubleOrNull() ?: 0.0) + (splitDepositGpayText.toDoubleOrNull() ?: 0.0)
                                 Text(
-                                    text = "Split Deposit Breakdown (Cash + GPay)",
+                                    text = "Split Deposit Breakdown (Cash + GPay = ₹${splitTotal.toInt()})",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BabaDark
@@ -1577,10 +1655,11 @@ fun QuickJobSheetScreen(
                                         value = splitDepositCashText,
                                         onValueChange = {
                                             splitDepositCashText = it.filter { c -> c.isDigit() || c == '.' }
-                                            val totalDep = depositText.toDoubleOrNull() ?: 0.0
                                             val cashVal = splitDepositCashText.toDoubleOrNull() ?: 0.0
-                                            val gpayVal = (totalDep - cashVal).coerceAtLeast(0.0)
-                                            splitDepositGpayText = if (gpayVal % 1.0 == 0.0) gpayVal.toInt().toString() else gpayVal.toString()
+                                            val gpayVal = splitDepositGpayText.toDoubleOrNull() ?: 0.0
+                                            val sum = cashVal + gpayVal
+                                            depositText = if (sum % 1.0 == 0.0) sum.toInt().toString() else sum.toString()
+                                            errorMessage = null
                                         },
                                         label = { Text("Cash (₹)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1593,10 +1672,11 @@ fun QuickJobSheetScreen(
                                         value = splitDepositGpayText,
                                         onValueChange = {
                                             splitDepositGpayText = it.filter { c -> c.isDigit() || c == '.' }
-                                            val totalDep = depositText.toDoubleOrNull() ?: 0.0
+                                            val cashVal = splitDepositCashText.toDoubleOrNull() ?: 0.0
                                             val gpayVal = splitDepositGpayText.toDoubleOrNull() ?: 0.0
-                                            val cashVal = (totalDep - gpayVal).coerceAtLeast(0.0)
-                                            splitDepositCashText = if (cashVal % 1.0 == 0.0) cashVal.toInt().toString() else cashVal.toString()
+                                            val sum = cashVal + gpayVal
+                                            depositText = if (sum % 1.0 == 0.0) sum.toInt().toString() else sum.toString()
+                                            errorMessage = null
                                         },
                                         label = { Text("GPay (₹)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1721,13 +1801,32 @@ fun QuickJobSheetScreen(
                     color = BabaOverdueLight,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "⚠ $errorMessage",
-                        color = BabaOverdue,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = errorMessage ?: "",
+                            color = BabaOverdue,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { errorMessage = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear Error",
+                                tint = BabaOverdue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1761,7 +1860,13 @@ fun QuickJobSheetScreen(
                     }
 
                     val discount = discountText.toDoubleOrNull() ?: 0.0
-                    val deposit = depositText.toDoubleOrNull() ?: 500.0
+                    val splitCashAmt = splitDepositCashText.toDoubleOrNull() ?: 0.0
+                    val splitGpayAmt = splitDepositGpayText.toDoubleOrNull() ?: 0.0
+                    val deposit = if (depositMethod == "split") {
+                        splitCashAmt + splitGpayAmt
+                    } else {
+                        depositText.toDoubleOrNull() ?: 0.0
+                    }
 
                     if (currentUser.role == "worker" && discount > currentUser.maxDiscountAmount) {
                         errorMessage = "Worker discount cannot exceed ₹${currentUser.maxDiscountAmount.toInt()} floor"
@@ -1777,17 +1882,12 @@ fun QuickJobSheetScreen(
                         phone = cleanPhone,
                         address = customerAddress.trim(),
                         idPhotoFrontPath = idPhotoFrontPath,
-                        idPhotoBackPath = idPhotoBackPath
+                        idPhotoBackPath = idPhotoBackPath,
+                        personPhotoPath = personPhotoPath
                     )
 
                     val effectiveDepositMethod = if (depositMethod == "split") {
-                        val cashAmt = splitDepositCashText.toDoubleOrNull() ?: 0.0
-                        val gpayAmt = splitDepositGpayText.toDoubleOrNull() ?: 0.0
-                        if (kotlin.math.abs((cashAmt + gpayAmt) - deposit) > 0.01) {
-                            errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal Deposit (₹${deposit.toInt()})"
-                            return@Button
-                        }
-                        "split:$cashAmt:$gpayAmt"
+                        "split:$splitCashAmt:$splitGpayAmt"
                     } else {
                         depositMethod
                     }
@@ -1848,6 +1948,8 @@ fun QuickJobSheetScreen(
 
     // Preview Dialog
     if (previewPhotoPath != null) {
+        val previewFile = remember(previewPhotoPath) { File(previewPhotoPath!!) }
+        val existsLocally = remember(previewPhotoPath) { previewFile.exists() && previewFile.length() > 0L }
         Dialog(onDismissRequest = { previewPhotoPath = null }) {
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -1869,15 +1971,52 @@ fun QuickJobSheetScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    AsyncImage(
-                        model = File(previewPhotoPath!!),
-                        contentDescription = "ID Photo",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                        contentScale = ContentScale.Fit
-                    )
+                    if (existsLocally) {
+                        AsyncImage(
+                            model = previewFile,
+                            contentDescription = "ID Photo",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(BabaLightGray),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoCamera,
+                                    contentDescription = "Photo is on the other device",
+                                    tint = BabaGray,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Photo is on the other device",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = BabaDark,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = previewFile.name,
+                                    fontSize = 11.sp,
+                                    color = BabaGray,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = { previewPhotoPath = null },
@@ -1946,6 +2085,294 @@ fun QuickJobSheetScreen(
             }
         }
     }
+
+    // Select Saved Customer Dialog (Ordered A-Z with #1, #2, #3...)
+    if (showSelectCustomerDialog) {
+        var customerSearch by remember { mutableStateOf("") }
+        val orderedList = remember(savedCustomers, customerSearch) {
+            val sorted = savedCustomers.sortedWith(
+                compareBy<CustomerEntity> { it.name.lowercase() }.thenBy { it.createdAt }
+            )
+            if (customerSearch.isBlank()) {
+                sorted
+            } else {
+                val q = customerSearch.trim()
+                sorted.filter {
+                    it.name.contains(q, ignoreCase = true) ||
+                    it.phone.contains(q) ||
+                    it.address.contains(q, ignoreCase = true)
+                }
+            }
+        }
+
+        Dialog(onDismissRequest = { showSelectCustomerDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(6.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Select Customer (${savedCustomers.size})",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 16.sp,
+                                color = BabaDark
+                            )
+                            Text(
+                                text = "Ordered A–Z • Tap a customer to fill order",
+                                fontSize = 11.sp,
+                                color = BabaGray
+                            )
+                        }
+                        IconButton(onClick = { showSelectCustomerDialog = false }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = BabaDark)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = customerSearch,
+                        onValueChange = { customerSearch = it },
+                        placeholder = { Text("Search customer name or phone...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BabaGray) },
+                        singleLine = true,
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    if (orderedList.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = if (savedCustomers.isEmpty()) "No customers saved yet" else "No matching customer found",
+                                    fontSize = 13.sp,
+                                    color = BabaGray
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        showSelectCustomerDialog = false
+                                        showManualCustomerDialog = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("+ Add Customer Manually", color = Color.White, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            orderedList.forEachIndexed { idx, cust ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = BabaLightGray,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            phone = cust.phone
+                                            customerName = cust.name
+                                            customerAddress = cust.address
+                                            if (cust.idPhotoFrontPath != null) idPhotoFrontPath = cust.idPhotoFrontPath
+                                            if (cust.idPhotoBackPath != null) idPhotoBackPath = cust.idPhotoBackPath
+                                            if (cust.personPhotoPath != null) personPhotoPath = cust.personPhotoPath
+                                            isReturningCustomer = true
+                                            showSelectCustomerDialog = false
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .background(BabaRedLight, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "#${idx + 1}",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = BabaRed
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = cust.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.5.sp,
+                                                color = BabaDark
+                                            )
+                                            Text(
+                                                text = cust.phone + if (cust.address.isNotBlank()) " • ${cust.address}" else "",
+                                                fontSize = 11.5.sp,
+                                                color = BabaGray
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircleOutline,
+                                            contentDescription = "Select",
+                                            tint = BabaRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add Customer Manually Dialog in QuickJobSheetScreen
+    if (showManualCustomerDialog) {
+        var newCustName by remember { mutableStateOf(customerName) }
+        var newCustPhone by remember { mutableStateOf(phone) }
+        var newCustAddress by remember { mutableStateOf(customerAddress) }
+        var newCustErr by remember { mutableStateOf<String?>(null) }
+
+        Dialog(onDismissRequest = { showManualCustomerDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Add Customer Manually",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 17.sp,
+                        color = BabaDark
+                    )
+                    Text(
+                        text = "Save customer to directory and fill into this order",
+                        fontSize = 12.sp,
+                        color = BabaGray
+                    )
+
+                    OutlinedTextField(
+                        value = newCustName,
+                        onValueChange = {
+                            newCustName = it
+                            newCustErr = null
+                        },
+                        label = { Text("Customer Name *") },
+                        singleLine = true,
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = newCustPhone,
+                        onValueChange = {
+                            newCustPhone = it.filter { c -> c.isDigit() }.take(10)
+                            newCustErr = null
+                        },
+                        label = { Text("Phone Number (10 Digits) *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = newCustAddress,
+                        onValueChange = {
+                            newCustAddress = it
+                            newCustErr = null
+                        },
+                        label = { Text("Site / Delivery Address") },
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    if (newCustErr != null) {
+                        Text(newCustErr!!, color = BabaOverdue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showManualCustomerDialog = false },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Cancel", color = BabaDark)
+                        }
+                        Button(
+                            onClick = {
+                                val cleanPh = newCustPhone.trim().filter { it.isDigit() }
+                                if (newCustName.trim().isEmpty()) {
+                                    newCustErr = "Please enter customer name"
+                                    return@Button
+                                }
+                                if (cleanPh.length < 10) {
+                                    newCustErr = "Please enter a valid 10-digit phone number"
+                                    return@Button
+                                }
+                                customerName = newCustName.trim()
+                                phone = cleanPh
+                                customerAddress = newCustAddress.trim()
+                                isReturningCustomer = true
+                                onSaveCustomerManually(customerName, cleanPh, customerAddress)
+                                showManualCustomerDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Save & Use", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -1974,6 +2401,8 @@ private fun IdPhotoUploadBox(
         color = Color.White
     ) {
         if (imagePath != null) {
+            val localFile = remember(imagePath) { File(imagePath) }
+            val existsLocally = remember(imagePath) { localFile.exists() && localFile.length() > 0L }
             Column(modifier = Modifier.padding(8.dp)) {
                 Box(
                     modifier = Modifier
@@ -1982,12 +2411,41 @@ private fun IdPhotoUploadBox(
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onPreviewClick() }
                 ) {
-                    AsyncImage(
-                        model = File(imagePath),
-                        contentDescription = title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
+                    if (existsLocally) {
+                        AsyncImage(
+                            model = localFile,
+                            contentDescription = title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(BabaLightGray),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoCamera,
+                                    contentDescription = "Photo is on the other device",
+                                    tint = BabaGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Photo is on the other device",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BabaDark,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

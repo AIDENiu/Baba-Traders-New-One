@@ -327,103 +327,166 @@ fun ExpensesScreen(
                 }
             }
 
-            // Section 2: Monthly Expense View / Report Header & Month Selector
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+            // Section 2: Monthly Expense View / Report Header & Month Selector (OWNER ONLY)
+            if (currentUser.role == "owner") {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                                    contentDescription = null,
-                                    tint = BabaRed,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                               Column {
-                                    Text(
-                                        text = "Monthly Expense Report",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = BabaDark
-                                    )
-                                    Text(
-                                        text = "Itemized list & month-end total expense",
-                                        fontSize = 11.sp,
-                                        color = BabaGray
-                                    )
-                                }
-                            }
-                        }
-
-                        // Month Navigation Bar
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = BabaLightGray,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                IconButton(
-                                    onClick = {
-                                        if (selectedMonth == 0) {
-                                            selectedMonth = 11
-                                            selectedYear -= 1
-                                        } else {
-                                            selectedMonth -= 1
-                                        }
-                                    }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Icon(Icons.Default.ChevronLeft, contentDescription = "Previous Month", tint = BabaDark)
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                        contentDescription = null,
+                                        tint = BabaRed,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "Monthly Expense Report",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = BabaDark
+                                        )
+                                        Text(
+                                            text = "Itemized list & month-end total expense",
+                                            fontSize = 11.sp,
+                                            color = BabaGray
+                                        )
+                                    }
                                 }
+                            }
 
-                                Text(
-                                    text = selectedMonthTitle,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 15.sp,
-                                    color = BabaDark
-                                )
-
-                                IconButton(
-                                    onClick = {
-                                        if (selectedMonth == 11) {
-                                            selectedMonth = 0
-                                            selectedYear += 1
-                                        } else {
-                                            selectedMonth += 1
-                                        }
-                                    }
+                            // Month Navigation Bar
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = BabaLightGray,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BabaBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.ChevronRight, contentDescription = "Next Month", tint = BabaDark)
+                                    IconButton(
+                                        onClick = {
+                                            if (selectedMonth == 0) {
+                                                selectedMonth = 11
+                                                selectedYear -= 1
+                                            } else {
+                                                selectedMonth -= 1
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.ChevronLeft, contentDescription = "Previous Month", tint = BabaDark)
+                                    }
+
+                                    Text(
+                                        text = selectedMonthTitle,
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 15.sp,
+                                        color = BabaDark
+                                    )
+
+                                    IconButton(
+                                        onClick = {
+                                            if (selectedMonth == 11) {
+                                                selectedMonth = 0
+                                                selectedYear += 1
+                                            } else {
+                                                selectedMonth += 1
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.ChevronRight, contentDescription = "Next Month", tint = BabaDark)
+                                    }
+                                }
+                            }
+
+                            // Total Monthly Expense Banner
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = BabaOverdueLight,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "TOTAL MONTHLY EXPENSE",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BabaOverdue
+                                        )
+                                        Text(
+                                            text = "$selectedMonthTitle (${monthlyExpenses.size} entries)",
+                                            fontSize = 11.sp,
+                                            color = BabaDark
+                                        )
+                                    }
+                                    Text(
+                                        text = "₹${totalMonthlyExpense.toInt()}",
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = BabaOverdue
+                                    )
                                 }
                             }
                         }
+                    }
+                }
 
-                        // Total Monthly Expense Banner
-                        Surface(
+                // Itemized Monthly Expenses List
+                if (monthlyExpenses.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(28.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No expenses recorded for $selectedMonthTitle",
+                                    fontSize = 13.sp,
+                                    color = BabaGray
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(monthlyExpenses, key = { it.id }) { exp ->
+                        Card(
                             shape = RoundedCornerShape(12.dp),
-                            color = BabaOverdueLight,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, BabaOverdue),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -433,119 +496,56 @@ fun ExpensesScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text(
-                                        text = "TOTAL MONTHLY EXPENSE",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BabaOverdue
-                                    )
-                                    Text(
-                                        text = "$selectedMonthTitle (${monthlyExpenses.size} entries)",
-                                        fontSize = 11.sp,
-                                        color = BabaDark
-                                    )
-                                }
-                                Text(
-                                    text = "₹${totalMonthlyExpense.toInt()}",
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = BabaOverdue
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Itemized Monthly Expenses List
-            if (monthlyExpenses.isEmpty()) {
-                item {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(28.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "No expenses recorded for $selectedMonthTitle",
-                                fontSize = 13.sp,
-                                color = BabaGray
-                            )
-                        }
-                    }
-                }
-            } else {
-                items(monthlyExpenses, key = { it.id }) { exp ->
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = BabaLightGray
+                                Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = BabaLightGray
+                                        ) {
+                                            Text(
+                                                text = exp.date,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BabaDark,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
                                         Text(
-                                            text = exp.date,
-                                            fontSize = 10.5.sp,
+                                            text = exp.expenseType,
                                             fontWeight = FontWeight.Bold,
-                                            color = BabaDark,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            fontSize = 14.sp,
+                                            color = BabaDark
                                         )
                                     }
+                                    if (exp.remarks.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Remarks: ${exp.remarks}",
+                                            fontSize = 12.sp,
+                                            color = BabaGray
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = exp.expenseType,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = BabaDark
-                                    )
-                                }
-                                if (exp.remarks.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Remarks: ${exp.remarks}",
-                                        fontSize = 12.sp,
+                                        text = "Logged by: ${exp.createdByName}",
+                                        fontSize = 10.sp,
                                         color = BabaGray
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "Logged by: ${exp.createdByName}",
-                                    fontSize = 10.sp,
-                                    color = BabaGray
-                                )
-                            }
 
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = "₹${exp.amount.toInt()}",
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 16.sp,
-                                    color = BabaOverdue
-                                )
-                                if (currentUser.role == "owner") {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "₹${exp.amount.toInt()}",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 16.sp,
+                                        color = BabaOverdue
+                                    )
                                     IconButton(
                                         onClick = { onDeleteExpense(exp.id) },
                                         modifier = Modifier.size(30.dp)
@@ -561,41 +561,41 @@ fun ExpensesScreen(
                             }
                         }
                     }
-                }
 
-                // End-of-Month Total Footer Card
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BabaDark,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    // End-of-Month Total Footer Card
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BabaDark,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "MONTH-END TOTAL EXPENSE",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BabaYellow
+                                    )
+                                    Text(
+                                        text = selectedMonthTitle,
+                                        fontSize = 12.sp,
+                                        color = Color.White
+                                    )
+                                }
                                 Text(
-                                    text = "MONTH-END TOTAL EXPENSE",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    text = "₹${totalMonthlyExpense.toInt()}",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Black,
                                     color = BabaYellow
                                 )
-                                Text(
-                                    text = selectedMonthTitle,
-                                    fontSize = 12.sp,
-                                    color = Color.White
-                                )
                             }
-                            Text(
-                                text = "₹${totalMonthlyExpense.toInt()}",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Black,
-                                color = BabaYellow
-                            )
                         }
                     }
                 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SupervisorAccount
@@ -131,7 +132,7 @@ fun AuthScreen(
                     )
 
                     Text(
-                        text = "BABA TRADERS",
+                        text = "BABA TRADERS.",
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Black,
                         color = Color.White,
@@ -329,13 +330,40 @@ fun AuthScreen(
                     )
 
                     if (errorMessage != null) {
-                        Text(
-                            text = errorMessage!!,
-                            color = BabaOverdue,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = BabaOverdueLight,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = errorMessage!!,
+                                    color = BabaOverdue,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = { errorMessage = null },
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear Error",
+                                        tint = BabaOverdue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     if (selectedUser?.role == "owner") {
@@ -381,7 +409,7 @@ fun AuthScreen(
                                 errorMessage = "Lockout active due to repeated failures. Please wait ${remainingSec}s."
                                 return@Button
                             }
-                            if (user.pin.isNotEmpty() && pin != user.pin) {
+                            if (pin.isBlank() || user.pin.isBlank() || pin != user.pin) {
                                 failedAttempts++
                                 if (failedAttempts >= 5) {
                                     lockoutUntil = System.currentTimeMillis() + 60_000L
@@ -390,6 +418,11 @@ fun AuthScreen(
                                     errorMessage = "Incorrect PIN (${5 - failedAttempts} attempts remaining)."
                                 }
                             } else {
+                                val fbEmail = try { Firebase.auth.currentUser?.email?.trim()?.lowercase().orEmpty() } catch (_: Exception) { "" }
+                                val ownerEmail = com.example.data.firebase.FirestoreSyncService.OWNER_EMAIL.trim().lowercase()
+                                if (user.role == "owner" && fbEmail.isNotEmpty() && fbEmail != ownerEmail) {
+                                    try { Firebase.auth.signOut() } catch (_: Exception) {}
+                                }
                                 failedAttempts = 0
                                 onLoginSuccess(user)
                             }
@@ -449,7 +482,17 @@ fun AuthScreen(
 
                             coroutineScope.launch {
                                 try {
-                                    val result = credentialManager.getCredential(context as Activity, request)
+                                    var ctx: Context? = context
+                                    var act: Activity? = null
+                                    while (ctx != null) {
+                                        if (ctx is Activity) {
+                                            act = ctx
+                                            break
+                                        }
+                                        ctx = (ctx as? android.content.ContextWrapper)?.baseContext
+                                    }
+                                    val targetActivity = act ?: throw IllegalStateException("Activity context unavailable")
+                                    val result = credentialManager.getCredential(targetActivity, request)
                                     val credential = result.credential
                                     if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                         val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -457,7 +500,16 @@ fun AuthScreen(
                                         val authResult = Firebase.auth.signInWithCredential(authCredential).await()
                                         val firebaseUser = authResult.user
                                         if (firebaseUser != null) {
-                                            val authenticatedUser = user.copy(id = firebaseUser.uid)
+                                            val signedInEmail = firebaseUser.email?.trim()?.lowercase().orEmpty()
+                                            val isOwnerAccount = signedInEmail == com.example.data.firebase.FirestoreSyncService.OWNER_EMAIL.trim().lowercase()
+                                            val resolvedRole = if (isOwnerAccount) "owner" else "worker"
+                                            val defaultName = firebaseUser.displayName?.takeIf { it.isNotBlank() } ?: user.name
+                                            val authenticatedUser = user.copy(
+                                                id = firebaseUser.uid,
+                                                name = if (user.role == resolvedRole) user.name else defaultName,
+                                                phoneOrUsername = signedInEmail.ifEmpty { user.phoneOrUsername.trim().lowercase() },
+                                                role = resolvedRole
+                                            )
                                             isGoogleSigningIn = false
                                             onLoginSuccess(authenticatedUser)
                                         } else {
@@ -469,12 +521,12 @@ fun AuthScreen(
                                         errorMessage = "Unexpected credential returned"
                                     }
                                 } catch (e: GetCredentialCancellationException) {
-                                    Log.w("Auth", "Google Sign-In cancelled: ${e.message}", e)
+                                    Log.d("Auth", "Google Sign-In cancelled: ${e.message}")
                                     isGoogleSigningIn = false
                                 } catch (e: Exception) {
-                                    Log.e("Auth", "Google Sign-In failed", e)
+                                    Log.d("Auth", "Google Sign-In unavailable: ${e.message}")
                                     isGoogleSigningIn = false
-                                    errorMessage = e.localizedMessage ?: "Google Sign-In failed"
+                                    errorMessage = "Please use your 4-digit PIN above to log in."
                                 }
                             }
                         },

@@ -37,7 +37,8 @@ data class MachineEntity(
     val currentRate: Double = 350.0,
     val totalQty: Int = 10,
     val availableQty: Int = 10,
-    val modelOrSpecs: String = ""
+    val modelOrSpecs: String = "",
+    val maintenanceQty: Int = 0
 ) : Serializable
 
 @Entity(tableName = "customers")

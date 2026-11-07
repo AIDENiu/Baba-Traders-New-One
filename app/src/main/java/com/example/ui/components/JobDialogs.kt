@@ -37,6 +37,7 @@ import com.example.data.repository.BabaRepository
 import com.example.data.repository.ReturnCalculation
 import com.example.ui.theme.*
 import com.example.util.PdfGenerator
+import com.example.util.PdfPreviewRequest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,6 +50,23 @@ fun ReceiptDialog(
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+    var localPdfFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    if (localPdfFile != null) {
+        val isReturned = jobSheet.status == "returned" || jobSheet.status == "closed"
+        val docLabel = if (isReturned) "FINAL INVOICE" else "RENTAL JOB SHEET"
+        InAppPdfViewerDialog(
+            request = PdfPreviewRequest(
+                file = localPdfFile!!,
+                title = "BABA Traders - $docLabel",
+                subtitle = "${jobSheet.id} • ${jobSheet.customerName} • 5.5\" × 8.5\" Bill",
+                shareSubject = "BABA Traders $docLabel - ${jobSheet.id} (${jobSheet.customerName})",
+                shareText = "Please find attached the 5.5\" × 8.5\" BABA Traders $docLabel (${jobSheet.id}) for ${jobSheet.customerName}."
+            ),
+            onDismiss = { localPdfFile = null }
+        )
+        return
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -85,6 +103,19 @@ fun ReceiptDialog(
                     fontSize = 10.sp,
                     color = BabaGray
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = BabaYellowLight
+                ) {
+                    Text(
+                        text = "Bill Format: 5.5\" Breadth × 8.5\" Length",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BabaDark,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = BabaBorder)
 
@@ -208,6 +239,22 @@ fun ReceiptDialog(
                     )
                     ReceiptRow("Security Deposit / Advance", "₹${jobSheet.depositAmount.toInt()}", textColor = BabaSuccess, isBold = true)
 
+                    listOf(
+                        "Customer Photo" to jobSheet.personPhotoPath,
+                        "ID Proof Photo" to jobSheet.idPhotoPath,
+                        "Machine Photo" to jobSheet.machinePhotoPath
+                    ).forEach { (label, photoPath) ->
+                        if (!photoPath.isNullOrBlank()) {
+                            val localPhotoFile = java.io.File(photoPath)
+                            val existsOnDevice = localPhotoFile.exists() && localPhotoFile.length() > 0L
+                            ReceiptRow(
+                                label,
+                                if (existsOnDevice) "Saved on this device (${localPhotoFile.name})" else "Photo is on the other device (${localPhotoFile.name})",
+                                textColor = if (existsOnDevice) BabaSuccess else BabaGray
+                            )
+                        }
+                    }
+
                     if (jobSheet.status != "returned" && jobSheet.status != "closed") {
                         val estBalance = estimatedNetRent - jobSheet.depositAmount
                         ReceiptRow(
@@ -268,7 +315,10 @@ fun ReceiptDialog(
                     ) {
                         Button(
                             onClick = {
-                                PdfGenerator.viewJobSheetPdf(context, jobSheet)
+                                val file = PdfGenerator.generateJobSheetPdf(context, jobSheet)
+                                if (file != null) {
+                                    localPdfFile = file
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
                             modifier = Modifier
@@ -278,7 +328,7 @@ fun ReceiptDialog(
                         ) {
                             Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("View PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Open Bill PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Button(
@@ -293,15 +343,30 @@ fun ReceiptDialog(
                         ) {
                             Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Share PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Send PDF Bill", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    // Secondary Save PDF, Text Share & Close
+                    // Secondary Print 5.5x8.5, Save PDF, Text Share
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        OutlinedButton(
+                            onClick = {
+                                val file = PdfGenerator.generateJobSheetPdf(context, jobSheet)
+                                PdfGenerator.printPdfFile(context, file, "BABA_Bill_${jobSheet.id}")
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("print_pdf_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Print, contentDescription = "Print Bill", modifier = Modifier.size(14.dp), tint = BabaDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Print 5.5×8.5", fontSize = 11.sp, color = BabaDark, fontWeight = FontWeight.SemiBold)
+                        }
+
                         OutlinedButton(
                             onClick = {
                                 val file = PdfGenerator.generateJobSheetPdf(context, jobSheet)
@@ -314,9 +379,14 @@ fun ReceiptDialog(
                         ) {
                             Icon(Icons.Default.Download, contentDescription = "Save PDF", modifier = Modifier.size(14.dp), tint = BabaDark)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Save PDF", fontSize = 11.sp, color = BabaDark)
+                            Text("Save PDF", fontSize = 11.sp, color = BabaDark, fontWeight = FontWeight.SemiBold)
                         }
+                    }
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         OutlinedButton(
                             onClick = {
                                 shareReceiptText(context, jobSheet)
@@ -328,16 +398,16 @@ fun ReceiptDialog(
                         ) {
                             Icon(Icons.Default.TextSnippet, contentDescription = "Text", modifier = Modifier.size(14.dp), tint = BabaDark)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Share Text", fontSize = 11.sp, color = BabaDark)
+                            Text("Send Bill Text / SMS", fontSize = 11.sp, color = BabaDark)
                         }
-                    }
 
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Close", fontSize = 11.sp, color = BabaRed, fontWeight = FontWeight.Bold)
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Close", fontSize = 11.sp, color = BabaRed, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -377,37 +447,7 @@ private fun ReceiptRow(
 }
 
 private fun shareReceiptText(context: Context, jobSheet: JobSheetEntity) {
-    val dateFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
-    val bookedDays = BabaRepository.calculateBookedDays(jobSheet.checkoutTime, jobSheet.dueTime)
-    val estTotalRent = maxOf(0.0, (bookedDays * jobSheet.rateUsed) - jobSheet.discount)
-    val text = """
-        *BABA TRADERS & Engineering Hardwares*
-        *Machinery Rental Receipt: ${jobSheet.id}*
-        ----------------------------------
-        Customer: ${jobSheet.customerName} (${jobSheet.customerPhone})
-        Machines: ${jobSheet.cleanMachineName}
-        Total Units: ${jobSheet.effectiveInitialQty}
-        Combined Daily Rate: ₹${jobSheet.rateUsed.toInt()}/day
-        Booked Duration: $bookedDays day(s)
-        Estimated Rent ($bookedDays day(s)): ₹${estTotalRent.toInt()}
-        Billing Cycle: 8:00 AM today to 8:00 AM tomorrow
-        Checked Out: ${dateFormat.format(Date(jobSheet.checkoutTime))}
-        Due Time: ${dateFormat.format(Date(jobSheet.dueTime))}
-        Deposit Paid: ₹${jobSheet.depositAmount.toInt()}
-        Checkout By: ${jobSheet.checkoutByName.ifEmpty { jobSheet.handledByName }}
-        Handled By: ${jobSheet.handledByName}
-        Status: ${if (jobSheet.status == "returned" || jobSheet.status == "closed") "BILLED" else jobSheet.status.uppercase()}
-        ----------------------------------
-        *Tools for a Stronger Tomorrow*
-        Contact: 9876543210
-    """.trimIndent()
-
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, "BABA Traders Receipt - ${jobSheet.id}")
-        putExtra(Intent.EXTRA_TEXT, text)
-    }
-    context.startActivity(Intent.createChooser(intent, "Share Job Sheet Receipt"))
+    PdfGenerator.sendBillToCustomer(context, jobSheet)
 }
 
 // --- Return Job Dialog ---
@@ -484,18 +524,14 @@ fun ReturnJobDialog(
     val finalPayable = if (isNoWorkDone) -depositAllocated else (netRentalFee - depositAllocated)
     val isPartialReturn = returningQuantity < activeUnits
 
-    // Keep split inputs synced when finalPayable changes if user hasn't typed custom split yet
-    val targetBillAmount = kotlin.math.abs(finalPayable)
-    LaunchedEffect(targetBillAmount, selectedMethod) {
-        if (selectedMethod == "split") {
-            val currentCash = splitCashInput.toDoubleOrNull() ?: 0.0
-            val currentGpay = splitGpayInput.toDoubleOrNull() ?: 0.0
-            if (kotlin.math.abs((currentCash + currentGpay) - targetBillAmount) > 0.01) {
-                val defaultCash = (targetBillAmount / 2.0).toInt()
-                val defaultGpay = (targetBillAmount.toInt() - defaultCash).coerceAtLeast(0)
-                splitCashInput = defaultCash.toString()
-                splitGpayInput = defaultGpay.toString()
-            }
+    // Keep split inputs initialized when switching to split mode
+    val targetBillAmount = if (kotlin.math.abs(finalPayable) > 0.01) kotlin.math.abs(finalPayable) else netRentalFee
+    LaunchedEffect(selectedMethod) {
+        if (selectedMethod == "split" && splitCashInput.isEmpty() && splitGpayInput.isEmpty()) {
+            val defaultCash = (targetBillAmount / 2.0).toInt()
+            val defaultGpay = (targetBillAmount.toInt() - defaultCash).coerceAtLeast(0)
+            splitCashInput = defaultCash.toString()
+            splitGpayInput = defaultGpay.toString()
         }
     }
 
@@ -1039,8 +1075,9 @@ fun ReturnJobDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val currentSplitSum = (splitCashInput.toDoubleOrNull() ?: 0.0) + (splitGpayInput.toDoubleOrNull() ?: 0.0)
                             Text(
-                                text = "Split Payment Breakdown (Total: ₹${targetBillAmount.toInt()})",
+                                text = "Split Payment Breakdown (Cash + GPay = ₹${currentSplitSum.toInt()})",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = BabaDark
@@ -1054,8 +1091,10 @@ fun ReturnJobDialog(
                                     onValueChange = {
                                         splitCashInput = it.filter { c -> c.isDigit() || c == '.' }
                                         val cashVal = splitCashInput.toDoubleOrNull() ?: 0.0
-                                        val remGpay = (targetBillAmount - cashVal).coerceAtLeast(0.0)
-                                        splitGpayInput = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                        if (targetBillAmount > 0 && cashVal <= targetBillAmount) {
+                                            val remGpay = (targetBillAmount - cashVal).coerceAtLeast(0.0)
+                                            splitGpayInput = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                        }
                                         errorMessage = null
                                     },
                                     label = { Text("Cash Amount (₹)") },
@@ -1069,9 +1108,6 @@ fun ReturnJobDialog(
                                     value = splitGpayInput,
                                     onValueChange = {
                                         splitGpayInput = it.filter { c -> c.isDigit() || c == '.' }
-                                        val gpayVal = splitGpayInput.toDoubleOrNull() ?: 0.0
-                                        val remCash = (targetBillAmount - gpayVal).coerceAtLeast(0.0)
-                                        splitCashInput = if (remCash % 1.0 == 0.0) remCash.toInt().toString() else remCash.toString()
                                         errorMessage = null
                                     },
                                     label = { Text("GPay Amount (₹)") },
@@ -1186,8 +1222,8 @@ fun ReturnJobDialog(
                             val effectiveMethod = if (selectedMethod == "split") {
                                 val cashAmt = splitCashInput.toDoubleOrNull() ?: 0.0
                                 val gpayAmt = splitGpayInput.toDoubleOrNull() ?: 0.0
-                                if (targetBillAmount > 0 && kotlin.math.abs((cashAmt + gpayAmt) - targetBillAmount) > 0.01) {
-                                    errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal ₹${targetBillAmount.toInt()}"
+                                if (targetBillAmount > 0 && (cashAmt + gpayAmt) <= 0.0) {
+                                    errorMessage = "Please enter Split Cash or GPay amount"
                                     return@Button
                                 }
                                 "split:$cashAmt:$gpayAmt"
@@ -1341,10 +1377,10 @@ fun AddExtraPaymentDialog(
                             value = splitCashText,
                             onValueChange = {
                                 splitCashText = it.filter { c -> c.isDigit() || c == '.' }
-                                val totalAmt = amountText.toDoubleOrNull() ?: 0.0
                                 val cashVal = splitCashText.toDoubleOrNull() ?: 0.0
-                                val remGpay = (totalAmt - cashVal).coerceAtLeast(0.0)
-                                splitGpayText = if (remGpay % 1.0 == 0.0) remGpay.toInt().toString() else remGpay.toString()
+                                val gpayVal = splitGpayText.toDoubleOrNull() ?: 0.0
+                                val sum = cashVal + gpayVal
+                                amountText = if (sum % 1.0 == 0.0) sum.toInt().toString() else sum.toString()
                                 errorMessage = null
                             },
                             label = { Text("Cash (₹)") },
@@ -1358,10 +1394,10 @@ fun AddExtraPaymentDialog(
                             value = splitGpayText,
                             onValueChange = {
                                 splitGpayText = it.filter { c -> c.isDigit() || c == '.' }
-                                val totalAmt = amountText.toDoubleOrNull() ?: 0.0
+                                val cashVal = splitCashText.toDoubleOrNull() ?: 0.0
                                 val gpayVal = splitGpayText.toDoubleOrNull() ?: 0.0
-                                val remCash = (totalAmt - gpayVal).coerceAtLeast(0.0)
-                                splitCashText = if (remCash % 1.0 == 0.0) remCash.toInt().toString() else remCash.toString()
+                                val sum = cashVal + gpayVal
+                                amountText = if (sum % 1.0 == 0.0) sum.toInt().toString() else sum.toString()
                                 errorMessage = null
                             },
                             label = { Text("GPay (₹)") },
@@ -1403,18 +1439,18 @@ fun AddExtraPaymentDialog(
 
                     Button(
                         onClick = {
-                            val amt = amountText.toDoubleOrNull()
+                            val cashAmt = splitCashText.toDoubleOrNull() ?: 0.0
+                            val gpayAmt = splitGpayText.toDoubleOrNull() ?: 0.0
+                            val amt = if (selectedMethod == "split" && (cashAmt + gpayAmt) > 0) {
+                                cashAmt + gpayAmt
+                            } else {
+                                amountText.toDoubleOrNull()
+                            }
                             if (amt == null || amt <= 0) {
                                 errorMessage = "Please enter a valid amount greater than 0"
                                 return@Button
                             }
                             val effectiveMode = if (selectedMethod == "split") {
-                                val cashAmt = splitCashText.toDoubleOrNull() ?: 0.0
-                                val gpayAmt = splitGpayText.toDoubleOrNull() ?: 0.0
-                                if (kotlin.math.abs((cashAmt + gpayAmt) - amt) > 0.01) {
-                                    errorMessage = "Split Cash (₹${cashAmt.toInt()}) + GPay (₹${gpayAmt.toInt()}) must equal ₹${amt.toInt()}"
-                                    return@Button
-                                }
                                 "split:$cashAmt:$gpayAmt"
                             } else {
                                 selectedMethod

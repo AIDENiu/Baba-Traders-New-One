@@ -504,7 +504,12 @@ fun AddWorkerDialog(
                     Button(
                         onClick = {
                             if (name.isNotBlank() && username.isNotBlank()) {
-                                onAdd(name.trim(), username.trim(), pin.trim(), discountLimit.toDoubleOrNull() ?: 150.0)
+                                onAdd(
+                                    name.trim(),
+                                    username.trim().lowercase(),
+                                    pin.trim(),
+                                    discountLimit.toDoubleOrNull() ?: 150.0
+                                )
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BabaRed),

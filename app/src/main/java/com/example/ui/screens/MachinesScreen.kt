@@ -34,6 +34,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clip
 
+private const val MAINTENANCE_TAB_ID = "__MAINTENANCE__"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MachinesScreen(
@@ -42,20 +44,57 @@ fun MachinesScreen(
     machines: List<MachineEntity>,
     onAddMachine: (categoryId: String, name: String, rate: Double, qty: Int, specs: String) -> Unit,
     onUpdatePricing: (machineId: String, currentRate: Double, totalQty: Int) -> Unit,
+    onUpdateMaintenance: (machineId: String, newMaintenanceQty: Int) -> Unit = { _, _ -> },
+    onUpdatePricingAndMaintenance: ((machineId: String, currentRate: Double, totalQty: Int, maintenanceQty: Int) -> Unit)? = null,
     onDeleteMachine: (machineId: String) -> Unit = {},
     onDeleteAllMachines: () -> Unit = {},
+    onAddCategory: (name: String) -> Unit = {},
+    onDeleteCategory: (categoryId: String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     BackHandler { onNavigateBack() }
     var selectedCategoryId by remember { mutableStateOf<String?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showAddCategoryDialog by remember { mutableStateOf(false) }
+    var categoryToDelete by remember { mutableStateOf<MachineCategoryEntity?>(null) }
     var machineToEdit by remember { mutableStateOf<MachineEntity?>(null) }
     var machineToDelete by remember { mutableStateOf<MachineEntity?>(null) }
     var showDeleteAllDialog by remember { mutableStateOf(false) }
 
+    val totalUnitsInMaintenance = remember(machines) {
+        machines.sumOf { it.maintenanceQty }
+    }
+    val machinesInMaintenanceCount = remember(machines) {
+        machines.count { it.maintenanceQty > 0 }
+    }
+
+    // Reset selectedCategoryId if that category was deleted
+    LaunchedEffect(categories, selectedCategoryId) {
+        if (selectedCategoryId != null &&
+            selectedCategoryId != MAINTENANCE_TAB_ID &&
+            categories.none { it.id == selectedCategoryId }
+        ) {
+            selectedCategoryId = null
+        }
+    }
+
     val filteredMachines = remember(machines, selectedCategoryId) {
-        if (selectedCategoryId == null) machines
-        else machines.filter { it.categoryId == selectedCategoryId }
+        when (selectedCategoryId) {
+            null -> machines
+            MAINTENANCE_TAB_ID -> machines.filter { it.maintenanceQty > 0 }
+            else -> machines.filter { it.categoryId == selectedCategoryId }
+        }
+    }
+
+    val selectedTabIndex = remember(selectedCategoryId, categories) {
+        when (selectedCategoryId) {
+            null -> 0
+            MAINTENANCE_TAB_ID -> 1
+            else -> {
+                val catIdx = categories.indexOfFirst { it.id == selectedCategoryId }
+                if (catIdx >= 0) catIdx + 2 else 0
+            }
+        }
     }
 
     Scaffold(
@@ -108,25 +147,142 @@ fun MachinesScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Category Filter Scrollable Tabs
+            // Category & Maintenance Filter Scrollable Tabs
             ScrollableTabRow(
-                selectedTabIndex = if (selectedCategoryId == null) 0 else (categories.indexOfFirst { it.id == selectedCategoryId } + 1).coerceAtLeast(0),
-                edgePadding = 16.dp,
+                selectedTabIndex = selectedTabIndex,
+                edgePadding = 12.dp,
                 containerColor = Color.White,
                 contentColor = BabaRed
             ) {
                 Tab(
                     selected = selectedCategoryId == null,
                     onClick = { selectedCategoryId = null },
-                    text = { Text("All (${machines.size})", fontWeight = if (selectedCategoryId == null) FontWeight.Bold else FontWeight.Normal) }
+                    text = {
+                        Text(
+                            text = "All (${machines.size})",
+                            fontWeight = if (selectedCategoryId == null) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedCategoryId == MAINTENANCE_TAB_ID,
+                    onClick = { selectedCategoryId = MAINTENANCE_TAB_ID },
+                    modifier = Modifier.testTag("maintenance_tab"),
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Build,
+                                contentDescription = "Maintenance",
+                                tint = if (totalUnitsInMaintenance > 0) BabaOverdue else BabaGray,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Maintenance ($totalUnitsInMaintenance)",
+                                fontWeight = if (selectedCategoryId == MAINTENANCE_TAB_ID) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedCategoryId == MAINTENANCE_TAB_ID || totalUnitsInMaintenance > 0) BabaOverdue else BabaDark
+                            )
+                        }
+                    }
                 )
                 categories.forEach { cat ->
                     val count = machines.count { it.categoryId == cat.id }
+                    val isSelected = selectedCategoryId == cat.id
                     Tab(
-                        selected = selectedCategoryId == cat.id,
+                        selected = isSelected,
                         onClick = { selectedCategoryId = cat.id },
-                        text = { Text("${cat.name} ($count)", fontWeight = if (selectedCategoryId == cat.id) FontWeight.Bold else FontWeight.Normal) }
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "${cat.name} ($count)",
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = BabaOverdueLight,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(CircleShape)
+                                        .clickable { categoryToDelete = cat }
+                                        .testTag("delete_category_tab_${cat.id}")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Delete ${cat.name}",
+                                            tint = BabaOverdue,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     )
+                }
+            }
+
+            // Category Action Bar (Add Category & Delete Selected Category)
+            Surface(
+                color = Color.White,
+                shadowElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = { showAddCategoryDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BabaRed),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BabaRed),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("add_category_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Category", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Category", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    val activeCat = categories.find { it.id == selectedCategoryId }
+                    if (activeCat != null) {
+                        OutlinedButton(
+                            onClick = { categoryToDelete = activeCat },
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, BabaOverdue),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = BabaOverdueLight.copy(alpha = 0.5f),
+                                contentColor = BabaOverdue
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("delete_selected_category_button")
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Delete Category", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Delete '${activeCat.name}'", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (selectedCategoryId == MAINTENANCE_TAB_ID) {
+                        Text(
+                            text = "$machinesInMaintenanceCount machine(s) • $totalUnitsInMaintenance unit(s) in maintenance",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BabaOverdue
+                        )
+                    } else if (categories.isNotEmpty()) {
+                        Text(
+                            text = "Tap × on any category tab to delete",
+                            fontSize = 11.sp,
+                            color = BabaGray
+                        )
+                    }
                 }
             }
 
@@ -158,7 +314,7 @@ fun MachinesScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = Icons.Default.HomeRepairService,
+                                        imageVector = if (selectedCategoryId == MAINTENANCE_TAB_ID) Icons.Default.Build else Icons.Default.HomeRepairService,
                                         contentDescription = "No Machines",
                                         tint = BabaRed,
                                         modifier = Modifier.size(28.dp)
@@ -166,26 +322,44 @@ fun MachinesScreen(
                                 }
                             }
                             Text(
-                                text = if (machines.isEmpty()) "No Machinery Added Yet" else "No Machines in This Category",
+                                text = when {
+                                    selectedCategoryId == MAINTENANCE_TAB_ID -> "No Machines in Maintenance"
+                                    machines.isEmpty() -> "No Machinery Added Yet"
+                                    else -> "No Machines in This Category"
+                                },
                                 fontWeight = FontWeight.Black,
                                 fontSize = 17.sp,
                                 color = BabaDark
                             )
                             Text(
-                                text = "Your machinery & rates catalog is clean. Tap below to add your shop's machines and daily rental rates.",
+                                text = if (selectedCategoryId == MAINTENANCE_TAB_ID) {
+                                    "All machines are currently ready for rent. On any machine card, use '-1 Maint.' to subtract 1 unit for repair or 'Out of Stock' to move all units to maintenance."
+                                } else {
+                                    "Your machinery & rates catalog is clean. Tap below to add your shop's machines and daily rental rates."
+                                },
                                 fontSize = 12.sp,
                                 color = BabaGray,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            Button(
-                                onClick = { showAddDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, tint = BabaYellow, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Add Machine", fontWeight = FontWeight.Bold, color = Color.White)
+                            if (selectedCategoryId == MAINTENANCE_TAB_ID && machines.isNotEmpty()) {
+                                OutlinedButton(
+                                    onClick = { selectedCategoryId = null },
+                                    border = BorderStroke(1.dp, BabaRed),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("View All Machines", fontWeight = FontWeight.Bold, color = BabaRed)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { showAddDialog = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, tint = BabaYellow, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Add Machine", fontWeight = FontWeight.Bold, color = Color.White)
+                                }
                             }
                         }
                     }
@@ -200,6 +374,9 @@ fun MachinesScreen(
                 ) {
                     items(filteredMachines, key = { it.id }) { machine ->
                         val category = categories.find { it.id == machine.categoryId }?.name ?: "Equipment"
+                        val rentedOutQty = (machine.totalQty - machine.availableQty - machine.maintenanceQty).coerceAtLeast(0)
+                        val isFullyInMaintenance = machine.availableQty == 0 && machine.maintenanceQty > 0
+
                         Card(
                             shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -235,7 +412,11 @@ fun MachinesScreen(
                                             color = if (machine.availableQty > 0) BabaSuccessLight else BabaOverdueLight
                                         ) {
                                             Text(
-                                                text = "${machine.availableQty}/${machine.totalQty} Available",
+                                                text = when {
+                                                    isFullyInMaintenance -> "Out of Stock (Maint.)"
+                                                    machine.availableQty == 0 -> "Out of Stock"
+                                                    else -> "${machine.availableQty}/${machine.totalQty} Available"
+                                                },
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (machine.availableQty > 0) BabaSuccess else BabaOverdue,
@@ -263,6 +444,152 @@ fun MachinesScreen(
                                     }
                                 }
 
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Maintenance & Stock Breakdown Section
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (machine.maintenanceQty > 0) BabaYellowLight.copy(alpha = 0.55f) else BabaLightGray,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (machine.maintenanceQty > 0) BabaYellowDark.copy(alpha = 0.6f) else BabaBorder
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Build,
+                                                    contentDescription = "Maintenance Status",
+                                                    tint = if (machine.maintenanceQty > 0) BabaOverdue else BabaGray,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = if (machine.maintenanceQty > 0) {
+                                                        "In Maintenance: ${machine.maintenanceQty} unit(s)"
+                                                    } else {
+                                                        "Maintenance: 0"
+                                                    },
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (machine.maintenanceQty > 0) BabaOverdue else BabaDark
+                                                )
+                                            }
+
+                                            Text(
+                                                text = "Avail: ${machine.availableQty} • Rented: $rentedOutQty • Total: ${machine.totalQty}",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = BabaGray
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // -1 from Available Stock -> Send 1 unit to Maintenance
+                                            OutlinedButton(
+                                                onClick = {
+                                                    onUpdateMaintenance(machine.id, machine.maintenanceQty + 1)
+                                                },
+                                                enabled = machine.availableQty > 0,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (machine.availableQty > 0) BabaOverdue.copy(alpha = 0.7f) else BabaBorder
+                                                ),
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    contentColor = BabaOverdue
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(32.dp)
+                                                    .testTag("send_one_maintenance_${machine.id}")
+                                            ) {
+                                                Icon(Icons.Default.RemoveCircleOutline, contentDescription = null, modifier = Modifier.size(13.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("-1 to Maint.", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            // +1 back to Available Stock from Maintenance
+                                            if (machine.maintenanceQty > 0) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        onUpdateMaintenance(machine.id, (machine.maintenanceQty - 1).coerceAtLeast(0))
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(1.dp, BabaSuccess),
+                                                    colors = ButtonDefaults.outlinedButtonColors(
+                                                        containerColor = BabaSuccessLight.copy(alpha = 0.5f),
+                                                        contentColor = BabaSuccess
+                                                    ),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(32.dp)
+                                                        .testTag("return_one_maintenance_${machine.id}")
+                                                ) {
+                                                    Icon(Icons.Default.CheckCircleOutline, contentDescription = null, modifier = Modifier.size(13.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("+1 Ready", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+
+                                            // Mark Entire Remaining Stock as Out of Stock (Maintenance) OR Restore All
+                                            val maxMaintPossible = (machine.totalQty - rentedOutQty).coerceAtLeast(0)
+                                            if (machine.availableQty > 0 && maxMaintPossible > 0) {
+                                                Button(
+                                                    onClick = {
+                                                        onUpdateMaintenance(machine.id, maxMaintPossible)
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = BabaOverdueLight,
+                                                        contentColor = BabaOverdue
+                                                    ),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier
+                                                        .height(32.dp)
+                                                        .testTag("mark_out_of_stock_maintenance_${machine.id}")
+                                                ) {
+                                                    Text("Out of Stock", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else if (machine.maintenanceQty > 0) {
+                                                Button(
+                                                    onClick = {
+                                                        onUpdateMaintenance(machine.id, 0)
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = BabaSuccess,
+                                                        contentColor = Color.White
+                                                    ),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier
+                                                        .height(32.dp)
+                                                        .testTag("restore_all_maintenance_${machine.id}")
+                                                ) {
+                                                    Text("Restore All", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = BabaBorder)
 
                                 Row(
@@ -280,7 +607,7 @@ fun MachinesScreen(
                                                 color = BabaDark
                                             )
                                             Text(
-                                                text = " / 24 hrs",
+                                                text = " / day",
                                                 fontSize = 11.sp,
                                                 color = BabaGray,
                                                 modifier = Modifier.padding(bottom = 2.dp)
@@ -331,7 +658,12 @@ fun MachinesScreen(
     // Add Machine Dialog
     if (showAddDialog) {
         var name by remember { mutableStateOf("") }
-        var selectedCatId by remember { mutableStateOf(selectedCategoryId ?: categories.firstOrNull()?.id ?: "") }
+        val initialCatId = if (selectedCategoryId != null && selectedCategoryId != MAINTENANCE_TAB_ID) {
+            selectedCategoryId!!
+        } else {
+            categories.firstOrNull()?.id ?: ""
+        }
+        var selectedCatId by remember { mutableStateOf(initialCatId) }
         var rateText by remember { mutableStateOf("") }
         var qtyText by remember { mutableStateOf("1") }
         var specs by remember { mutableStateOf("") }
@@ -348,8 +680,28 @@ fun MachinesScreen(
                 ) {
                     Text("Add Machinery to Inventory", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = BabaDark)
 
-                    if (categories.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("Category", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BabaGray)
+                        TextButton(
+                            onClick = { showAddCategoryDialog = true },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, tint = BabaRed, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("New Category", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BabaRed)
+                        }
+                    }
+
+                    if (categories.isNotEmpty()) {
+                        LaunchedEffect(categories) {
+                            if (selectedCatId.isEmpty() || categories.none { it.id == selectedCatId }) {
+                                selectedCatId = categories.first().id
+                            }
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -376,6 +728,12 @@ fun MachinesScreen(
                                 }
                             }
                         }
+                    } else {
+                        Text(
+                            text = "No categories available. Tap '+ New Category' above to create one.",
+                            fontSize = 11.sp,
+                            color = BabaOverdue
+                        )
                     }
 
                     OutlinedTextField(
@@ -447,11 +805,12 @@ fun MachinesScreen(
         }
     }
 
-    // Edit Pricing Dialog
+    // Edit Pricing & Maintenance Dialog
     if (machineToEdit != null) {
         val machine = machineToEdit!!
         var currentRateText by remember { mutableStateOf(machine.currentRate.toInt().toString()) }
         var totalQtyText by remember { mutableStateOf(machine.totalQty.toString()) }
+        var maintenanceQtyText by remember { mutableStateOf(machine.maintenanceQty.toString()) }
 
         Dialog(onDismissRequest = { machineToEdit = null }) {
             Card(
@@ -463,7 +822,7 @@ fun MachinesScreen(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("Update Machine Rate & Stock", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = BabaDark)
+                    Text("Update Rate, Stock & Maintenance", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = BabaDark)
                     Text(machine.name, fontSize = 13.sp, color = BabaGray)
 
                     OutlinedTextField(
@@ -488,6 +847,17 @@ fun MachinesScreen(
                         shape = RoundedCornerShape(8.dp)
                     )
 
+                    OutlinedTextField(
+                        value = maintenanceQtyText,
+                        onValueChange = { maintenanceQtyText = it },
+                        label = { Text("Units in Maintenance (Subtracted from Available)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -499,7 +869,13 @@ fun MachinesScreen(
                             onClick = {
                                 val rate = currentRateText.toDoubleOrNull() ?: machine.currentRate
                                 val qty = totalQtyText.toIntOrNull() ?: machine.totalQty
-                                onUpdatePricing(machine.id, rate, qty)
+                                val maint = (maintenanceQtyText.toIntOrNull() ?: machine.maintenanceQty).coerceIn(0, qty)
+                                if (onUpdatePricingAndMaintenance != null) {
+                                    onUpdatePricingAndMaintenance(machine.id, rate, qty, maint)
+                                } else {
+                                    onUpdatePricing(machine.id, rate, qty)
+                                    onUpdateMaintenance(machine.id, maint)
+                                }
                                 machineToEdit = null
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
@@ -719,6 +1095,183 @@ fun MachinesScreen(
                             Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Delete All", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add Category Dialog
+    if (showAddCategoryDialog) {
+        var categoryName by remember { mutableStateOf("") }
+        var categoryError by remember { mutableStateOf<String?>(null) }
+
+        Dialog(onDismissRequest = { showAddCategoryDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Add New Category",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 17.sp,
+                        color = BabaDark
+                    )
+                    Text(
+                        text = "Create a category for grouping your machinery & rental rates",
+                        fontSize = 12.sp,
+                        color = BabaGray
+                    )
+
+                    OutlinedTextField(
+                        value = categoryName,
+                        onValueChange = {
+                            categoryName = it
+                            categoryError = null
+                        },
+                        label = { Text("Category Name *") },
+                        placeholder = { Text("e.g., Concrete Mixers, Drills, Breakers") },
+                        colors = babaTextFieldColors(),
+                        textStyle = babaInputTextStyle(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.fillMaxWidth().testTag("new_category_name_input"),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    if (categoryError != null) {
+                        Text(
+                            text = categoryError!!,
+                            fontSize = 12.sp,
+                            color = BabaOverdue,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showAddCategoryDialog = false },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Cancel", color = BabaDark)
+                        }
+                        Button(
+                            onClick = {
+                                val trimmed = categoryName.trim()
+                                if (trimmed.isEmpty()) {
+                                    categoryError = "Please enter a category name"
+                                    return@Button
+                                }
+                                onAddCategory(trimmed)
+                                showAddCategoryDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaRed),
+                            modifier = Modifier.weight(1f).testTag("confirm_add_category_button"),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add Category", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete Category Confirmation Dialog
+    if (categoryToDelete != null) {
+        val cat = categoryToDelete!!
+        val catMachineCount = machines.count { it.categoryId == cat.id }
+
+        Dialog(onDismissRequest = { categoryToDelete = null }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = BabaOverdueLight,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteForever,
+                                    contentDescription = "Delete Category",
+                                    tint = BabaOverdue,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Delete Category?",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 17.sp,
+                                color = BabaDark
+                            )
+                            Text(
+                                text = cat.name,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BabaOverdue
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (catMachineCount > 0) {
+                            "Are you sure you want to delete '${cat.name}'? This will also remove $catMachineCount machine(s) under this category."
+                        } else {
+                            "Are you sure you want to delete the '${cat.name}' category?"
+                        },
+                        fontSize = 12.sp,
+                        color = BabaGray
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { categoryToDelete = null },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Cancel", color = BabaDark)
+                        }
+                        Button(
+                            onClick = {
+                                if (selectedCategoryId == cat.id) {
+                                    selectedCategoryId = null
+                                }
+                                onDeleteCategory(cat.id)
+                                categoryToDelete = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BabaOverdue),
+                            modifier = Modifier.weight(1f).testTag("confirm_delete_category_button"),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
